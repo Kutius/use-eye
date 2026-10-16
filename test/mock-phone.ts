@@ -1,16 +1,30 @@
 /**
  * Simulated phone: connects over WebSocket, pushes JPEG frames, answers control.
  * Usage: bun test/mock-phone.ts  (bridge must be running)
+ *
+ * Token is taken from USE_EYE_TOKEN, or discovered from the bridge /status
+ * phoneUrl so callers never have to paste it.
  */
-const TOKEN = process.env.USE_EYE_TOKEN ?? "";
-// Default to the plain-HTTP loopback twin. A phone would use the HTTPS port instead,
-// but a script has no secure-context requirement and Bun's WebSocket client does not
-// want a self-signed cert.
 const BASE = process.env.USE_EYE_PHONE_BASE ?? "http://127.0.0.1:8786";
-if (!TOKEN) {
-  console.error("set USE_EYE_TOKEN to the token printed by the server");
-  process.exit(1);
+const AGENT = process.env.USE_EYE_AGENT ?? "http://127.0.0.1:8788";
+
+async function resolveToken(): Promise<string> {
+  const fromEnv = process.env.USE_EYE_TOKEN;
+  if (fromEnv) return fromEnv;
+  const res = await fetch(`${AGENT}/status`);
+  if (!res.ok) throw new Error(`bridge not reachable at ${AGENT}`);
+  const st = (await res.json()) as { phoneUrl?: string };
+  const url = new URL(st.phoneUrl ?? "");
+  const parts = url.pathname.split("/").filter(Boolean);
+  const token = parts[parts.length - 1];
+  if (!token) throw new Error("no token in phoneUrl");
+  return token;
 }
+
+const TOKEN = await resolveToken().catch((e: Error) => {
+  console.error(e.message);
+  process.exit(1);
+});
 
 const ws = new WebSocket(`${BASE.replace("http", "ws")}/c/${TOKEN}/ws`);
 ws.binaryType = "arraybuffer";

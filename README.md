@@ -10,17 +10,19 @@ phone browser  ──JPEG over WebSocket──►  bridge (this machine)  ◄─
 
 ```bash
 bun install
-bun run start
+bun run build
+node bin/use-eye.mjs start
 ```
 
-The terminal prints a phone URL, a QR code, and the agent endpoints. Open the URL on your phone,
-allow the camera, and the agent can see.
+`start` brings the bridge up, prints the phone URL and QR code, waits until your phone is
+connected, then returns. Open the URL on your phone and allow the camera.
 
 ```bash
 use-eye snap -o look.jpg   # grab a frame now
 use-eye torch on           # flashlight
 use-eye facing user        # front camera
 use-eye status             # JSON state
+use-eye stop               # shut the bridge down
 ```
 
 Or just read the file the bridge keeps fresh:
@@ -29,28 +31,40 @@ Or just read the file the bridge keeps fresh:
 ~/.use-eye/latest.jpg
 ```
 
+If you want the bridge in the foreground with live logs instead, `bun run start`.
+
 ## Agent CLI
 
 Built with tsdown into a single Node ESM file at `bin/use-eye.mjs`. `bun run build` produces it
 alongside the Vite output.
 
+Every command returns control to the shell. `use-eye start` blocks only while it waits for a
+phone to connect, then hands the shell back with the bridge still running in the background.
+
 ```
-use-eye status                bridge state as JSON
-use-eye wait [--timeout 60]   block until a phone is connected
-use-eye snap [-o out.jpg]     save a fresh frame, print the absolute path
+use-eye start [--timeout 120] [--no-wait] [--foreground] [--json]
+               start the bridge, print the phone URL, wait for a phone, return
+use-eye stop                 stop the background bridge
+use-eye restart              stop + start
+use-eye status               bridge state as JSON
+use-eye wait [--timeout 60]  wait for a phone to connect
+use-eye snap [-o out.jpg]    save a fresh frame, print the absolute path
 use-eye torch on|off
 use-eye facing user|environment
 use-eye pause on|off
-use-eye watch [--fps 1]       stream frames into ./frames/
-use-eye start                 build + run the bridge
+use-eye watch [--fps 1] [--count 10]   stream frames to ./frames/
 ```
+
+`--no-wait` skips the connection wait. `--foreground` keeps the bridge in the terminal for
+log watching. `watch` without `--count` runs until interrupted.
 
 `USE_EYE_AGENT` points at the agent port (default `http://127.0.0.1:8788`).
 
 ## Skill for agents
 
-`skill/SKILL.md` teaches an agent how to use the CLI: when to snap, how to aim, what to do when
-the phone drops. Copy it into your skills directory to make it loadable:
+`skill/SKILL.md` teaches an agent how to use the CLI: start and wait for the phone, snap and
+read the image, aim with torch/facing, recover from failures, the privacy boundary. Copy it
+into your skills directory to make it loadable:
 
 ```bash
 cp -r skill ~/.claude/skills/use-eye

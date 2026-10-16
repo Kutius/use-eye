@@ -8,29 +8,28 @@ description: Look through a phone camera from the agent. Use when the user wants
 You can see through the user's phone camera. A bridge on this machine receives JPEG frames
 from a phone browser and hands them to you over a local CLI.
 
-## Preconditions
-
-The bridge must be running and a phone must be connected. Check first:
+## Get it running
 
 ```bash
-use-eye status
+use-eye start
 ```
 
-Useful fields in the JSON: `phoneConnected`, `phoneUrl`, `frame.ageMs`, `facing`, `torch`,
-`latestJpg`.
+This starts the bridge in the background, prints the phone URL, then **waits until a phone is
+connected and returns**. The shell comes back as soon as the camera is live. Use that waiting
+window to tell the user which URL to open.
 
-If `phoneConnected` is false, tell the user to open the `phoneUrl` on their phone and allow
-the camera. Then `use-eye wait --timeout 60` to block until it attaches. Do not invent frames.
+Flags worth knowing:
 
-If `use-eye` is not on PATH, the bundled CLI is `bin/use-eye.mjs` in this project. Use
-`node bin/use-eye.mjs` or `bun bin/use-eye.mjs`.
+- `--no-wait` return as soon as the bridge is up, without waiting for the phone
+- `--timeout 120` how long to wait for the phone (seconds, default 120)
+- `--json` machine-readable output
+- `--foreground` keep the bridge in this terminal (do not use this; it never returns)
 
-If the bridge itself is down (`status` cannot connect), tell the user to run `bun run start`
-in the project directory. Do not start it yourself unless they ask.
+If `use-eye start` prints `already running`, a bridge is already up and it is now waiting for
+the phone. If it times out, the URL is printed again. Tell the user to open it, allow the
+camera, then run `use-eye wait`.
 
 ## Look at something
-
-Grab a still, then read it as an image. Always write to a file and Read that file.
 
 ```bash
 use-eye snap -o /tmp/look.jpg
@@ -38,13 +37,11 @@ use-eye snap -o /tmp/look.jpg
 
 Then Read `/tmp/look.jpg`. The command prints the absolute path it wrote.
 
-- Default wait for a fresh frame is 4s. If it times out, the phone is paused or the stream is
-  stalled. Check `use-eye status` and ask the user to unlock the phone screen.
-- The bridge also keeps the latest frame at `~/.use-eye/latest.jpg`. Reading that file is
-  faster when you do not need a guaranteed-new capture. The `snap` path is what you want when
-  the subject may have moved.
-- Frame is 1080p-class JPEG. For detail work (small text, fine print), that is usually enough.
-  If the text is still unreadable, ask the user to move the phone closer, then snap again.
+- Waits up to 4s for a fresh frame. On timeout the phone is paused or the screen is locked.
+  Check `use-eye status`, ask the user to unlock and re-allow the camera.
+- `~/.use-eye/latest.jpg` is the bridge's auto-saved last frame. Read that when you do not
+  need a guaranteed-new capture; use `snap` when the subject may have moved.
+- If small text is unreadable, ask the user to move the phone closer and snap again.
 
 ## Aim the camera
 
@@ -57,37 +54,47 @@ use-eye pause on            # stop sending frames
 use-eye pause off
 ```
 
-The user is holding the phone. You cannot aim it. Describe where to point: "hold the phone
-about 20cm above the label", "step back so the whole whiteboard fits". Then snap.
+The user is holding the phone. You cannot aim it. Say where to point: "hold it about 20cm
+above the label", "step back so the whole board fits". Then snap.
 
-`torch` is the one control you should use freely. Do not flip `facing` unless the user
-explicitly wants a selfie or the scene is clearly in front of the phone.
+`torch` is the one control to use freely. Do not flip `facing` unless the user asks, or the
+scene is clearly on the selfie side.
 
 ## Watch a scene
 
 ```bash
-use-eye watch --fps 1
+use-eye watch --fps 1 --count 10
 ```
 
-Writes `frames/00001.jpg`, `00002.jpg`, ... until you interrupt it. Use this when the user is
-doing something and wants you to keep looking. Read the newest file as it appears.
+Writes `frames/00001.jpg` and so on. **Always pass `--count`**, otherwise the command never
+returns and blocks the next tool call. Read the newest file as it appears.
+
+## When you are done
+
+```bash
+use-eye stop
+```
+
+Stops the background bridge. Only do this when the user is finished, or they asked you to shut
+it down. Leaving it running is fine if more looks are coming.
 
 ## Failure modes
 
 | What you see | What it means | What to do |
 |---|---|---|
-| `bridge not reachable` | bridge is not running | ask the user to run `bun run start` |
-| `no phone connected` | nobody opened the phone URL | hand them `phoneUrl`, then `use-eye wait` |
-| `no fresh frame arrived in time` | stream paused, screen locked, or camera denied | `use-eye pause off`, ask them to unlock and re-allow camera |
-| image is black | lens covered or torch needed | `use-eye torch on`, ask them to check the lens |
+| `bridge not reachable` | bridge is not running | `use-eye start` |
+| `no phone connected within Ns` | nobody opened the URL yet | repeat the URL to the user, then `use-eye wait` |
+| `no fresh frame arrived in time` | stream paused, screen locked, camera denied | `use-eye pause off`, ask them to unlock and re-allow |
+| `bridge ... does not own it` on stop | someone else started the bridge | ask them to stop it in that terminal |
+| image is black | lens covered, or dark scene | `use-eye torch on`, check the lens |
 | image is the wrong side | front camera | `use-eye facing environment` |
 
 ## Privacy
 
 The phone camera is pointed at someone's real space. Do not snap or watch without a reason
 the user gave you. Do not save frames outside the paths you were asked to use. Do not describe
-people, screens, or documents in the frame unless the user asked about them. When you are done,
-`use-eye pause on` stops the stream.
+people, screens, or documents in the frame unless the user asked about them. When you are
+done looking, `use-eye pause on` stops the stream.
 
 ## What this is not
 
