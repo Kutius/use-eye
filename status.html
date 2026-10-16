@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0a0b0d" />
+    <title>use-eye · desk</title>
+  </head>
+  <body>
+    <main class="desk">
+      <header class="desk-head">
+        <p class="wordmark">use-eye</p>
+        <p class="tag">point the phone at what the agent should see</p>
+      </header>
+
+      <section class="pair">
+        <div class="pair-code">
+          <img id="qr" alt="QR code for the phone page" width="220" height="220" />
+        </div>
+        <div class="pair-info">
+          <p class="label">open on your phone</p>
+          <p class="url" id="phone-url">&nbsp;</p>
+          <p class="label" id="tunnel-label">tunnel</p>
+          <p class="tunnel" id="tunnel-note">&nbsp;</p>
+          <p class="label">state</p>
+          <p class="state" id="state-line">waiting for a phone</p>
+        </div>
+      </section>
+
+      <section class="frame-row">
+        <figure class="frame">
+          <img id="frame" alt="Most recent frame from the phone camera" />
+          <figcaption id="frame-cap">no frame yet</figcaption>
+        </figure>
+        <div class="endpoints">
+          <p class="label">agent endpoints</p>
+          <pre id="endpoints" class="code"></pre>
+          <p class="label">or just read the file</p>
+          <pre id="disk" class="code"></pre>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="/src/status/main.ts"></script>
+  </body>
+</html>

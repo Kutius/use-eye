@@ -1,0 +1,29 @@
+{
+  "name": "use-eye",
+  "version": "0.1.0",
+  "description": "Let an AI agent see through your phone camera. Open a webpage, point, let it look.",
+  "type": "module",
+  "bin": {
+    "use-eye": "./cli.ts"
+  },
+  "scripts": {
+    "dev": "vite build --watch & bun --watch server/index.ts",
+    "build": "vite build",
+    "start": "vite build && bun server/index.ts",
+    "server": "bun server/index.ts",
+    "cli": "bun cli.ts",
+    "mcp": "bun mcp.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fontsource-variable/archivo": "^5.2.5",
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.10",
+    "@types/qrcode": "^1.5.5",
+    "typescript": "^5.7.3",
+    "vite": "^6.3.2"
+  }
+}

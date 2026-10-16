@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.taste-skill/
+shots/
+test/body.json
+test/out.jpg
+test/snap.jpg
+test/.token
+*.log
+.DS_Store

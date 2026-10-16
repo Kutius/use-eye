@@ -1,0 +1,322 @@
+@import "./tokens.css";
+
+.stage {
+  position: relative;
+  width: 100%;
+  height: 100dvh;
+  overflow: hidden;
+  background: var(--canvas-deep);
+  isolation: isolate;
+}
+
+#viewfinder {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: var(--canvas-deep);
+}
+
+/* Viewfinder corner marks: the signature. They breathe with the stream. */
+.frame-marks {
+  position: absolute;
+  inset: calc(env(safe-area-inset-top) + 64px) 18px calc(env(safe-area-inset-bottom) + 110px);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.mark {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  border: 2px solid oklch(0.93 0.005 265 / 0.5);
+  transition: transform var(--snap), border-color var(--snap);
+}
+
+.mark.tl { top: 0; left: 0; border-right: 0; border-bottom: 0; }
+.mark.tr { top: 0; right: 0; border-left: 0; border-bottom: 0; }
+.mark.bl { bottom: 0; left: 0; border-right: 0; border-top: 0; }
+.mark.br { bottom: 0; right: 0; border-left: 0; border-top: 0; }
+
+.stage.is-live .mark {
+  border-color: oklch(0.93 0.005 265 / 0.8);
+}
+
+/* signature move: agent grab pushes the marks outward, then they settle */
+.stage.grab .mark.tl { transform: translate(-6px, -6px); }
+.stage.grab .mark.tr { transform: translate(6px, -6px); }
+.stage.grab .mark.bl { transform: translate(-6px, 6px); }
+.stage.grab .mark.br { transform: translate(6px, 6px); }
+.stage.grab .mark { border-color: var(--tally); }
+
+/* ---- rails ---------------------------------------------------------------- */
+.rail {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px var(--rail-pad-x);
+  background: oklch(0.1 0.006 265 / 0.72);
+}
+
+.rail-top {
+  top: 0;
+  padding-top: calc(env(safe-area-inset-top) + 14px);
+}
+
+.rail-bottom {
+  bottom: 0;
+  padding-bottom: calc(env(safe-area-inset-bottom) + 18px);
+  background: oklch(0.1 0.006 265 / 0.82);
+}
+
+.tally-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.tally {
+  width: 9px;
+  height: 9px;
+  border-radius: var(--r-control);
+  background: var(--ink-faint);
+  flex: none;
+  transition: background var(--snap);
+}
+
+.stage.is-live .tally {
+  background: var(--tally);
+  animation: tally-pulse 2.4s ease-in-out infinite;
+}
+
+.stage.is-paused .tally {
+  background: var(--ink-dim);
+  animation: none;
+}
+
+.stage.is-error .tally {
+  background: var(--tally);
+  animation: none;
+}
+
+@keyframes tally-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.tally-label {
+  font-size: 13px;
+  font-weight: 560;
+  letter-spacing: -0.012em;
+  text-transform: lowercase;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.readout {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.012em;
+  white-space: nowrap;
+}
+
+.readout .sep {
+  width: 3px;
+  height: 3px;
+  border-radius: var(--r-control);
+  background: var(--ink-faint);
+}
+
+/* ---- hint ----------------------------------------------------------------- */
+.hint {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(env(safe-area-inset-bottom) + 108px);
+  z-index: 3;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-dim);
+  padding: 0 28px;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity var(--snap), transform var(--snap);
+}
+
+.hint.is-shown {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.hint.is-alert {
+  color: var(--tally);
+}
+
+/* ---- controls ------------------------------------------------------------- */
+.controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
+  width: 100%;
+}
+
+.ctl {
+  width: 52px;
+  height: 52px;
+  border-radius: var(--r-control);
+  background: oklch(0.24 0.012 265 / 0.92);
+  color: var(--ink);
+  display: grid;
+  place-items: center;
+  transition: transform var(--press), background var(--press), color var(--press);
+}
+
+.ctl svg {
+  width: 23px;
+  height: 23px;
+  display: block;
+}
+
+.ctl svg[hidden] {
+  display: none;
+}
+
+.ctl:active {
+  transform: scale(0.96);
+  background: var(--panel-hi);
+}
+
+@media (hover: hover) {
+  .ctl:hover {
+    background: var(--panel-hi);
+  }
+}
+
+.ctl[aria-pressed="true"] {
+  background: var(--tally);
+  color: var(--canvas-deep);
+}
+
+.ctl-main {
+  width: 68px;
+  height: 68px;
+  background: var(--ink);
+  color: var(--canvas-deep);
+}
+
+.ctl-main:active {
+  background: oklch(0.86 0.005 265);
+}
+
+@media (hover: hover) {
+  .ctl-main:hover {
+    background: oklch(0.88 0.005 265);
+  }
+}
+
+.ctl:disabled {
+  opacity: 0.32;
+  pointer-events: none;
+}
+
+/* ---- connection sheet ----------------------------------------------------- */
+.sheet {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  background: oklch(0.1 0.006 265 / 0.88);
+  display: grid;
+  place-items: end center;
+  padding: 24px;
+  padding-bottom: calc(env(safe-area-inset-bottom) + 24px);
+}
+
+.sheet[hidden] {
+  display: none;
+}
+
+.sheet-inner {
+  width: min(420px, 100%);
+  background: var(--panel);
+  border-radius: var(--r-panel);
+  padding: 24px;
+  display: grid;
+  gap: 12px;
+}
+
+.sheet-kicker {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-faint);
+  letter-spacing: -0.012em;
+}
+
+.sheet-url {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 560;
+  color: var(--ink);
+  word-break: break-all;
+  font-variant-numeric: tabular-nums;
+}
+
+.sheet-note {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink-dim);
+}
+
+.sheet-close {
+  justify-self: start;
+  margin-top: 8px;
+  padding: 12px 22px;
+  min-height: 44px;
+  border-radius: var(--r-control);
+  background: var(--panel-hi);
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 560;
+  transition: transform var(--press), background var(--press);
+}
+
+.sheet-close:active {
+  transform: scale(0.96);
+}
+
+@media (hover: hover) {
+  .sheet-close:hover {
+    background: oklch(0.3 0.014 265);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .stage.grab .mark {
+    transform: none;
+  }
+}
