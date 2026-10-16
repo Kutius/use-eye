@@ -3,7 +3,7 @@
 Let an AI agent see through your phone camera. Open a webpage, point at a thing, let the agent look.
 
 ```
-phone browser  ──JPEG over WebSocket──►  bridge (this machine)  ◄──HTTP / MCP──  AI agent
+phone browser  ──JPEG over WebSocket──►  bridge (this machine)  ◄──CLI / HTTP──  AI agent
 ```
 
 ## Quick start
@@ -17,10 +17,10 @@ The terminal prints a phone URL, a QR code, and the agent endpoints. Open the UR
 allow the camera, and the agent can see.
 
 ```bash
-bun cli.ts snap -o look.jpg   # grab a frame now
-bun cli.ts torch on           # flashlight
-bun cli.ts facing user        # front camera
-bun cli.ts status             # JSON state
+use-eye snap -o look.jpg   # grab a frame now
+use-eye torch on           # flashlight
+use-eye facing user        # front camera
+use-eye status             # JSON state
 ```
 
 Or just read the file the bridge keeps fresh:
@@ -28,6 +28,35 @@ Or just read the file the bridge keeps fresh:
 ```
 ~/.use-eye/latest.jpg
 ```
+
+## Agent CLI
+
+Built with tsdown into a single Node ESM file at `bin/use-eye.mjs`. `bun run build` produces it
+alongside the Vite output.
+
+```
+use-eye status                bridge state as JSON
+use-eye wait [--timeout 60]   block until a phone is connected
+use-eye snap [-o out.jpg]     save a fresh frame, print the absolute path
+use-eye torch on|off
+use-eye facing user|environment
+use-eye pause on|off
+use-eye watch [--fps 1]       stream frames into ./frames/
+use-eye start                 build + run the bridge
+```
+
+`USE_EYE_AGENT` points at the agent port (default `http://127.0.0.1:8788`).
+
+## Skill for agents
+
+`skill/SKILL.md` teaches an agent how to use the CLI: when to snap, how to aim, what to do when
+the phone drops. Copy it into your skills directory to make it loadable:
+
+```bash
+cp -r skill ~/.claude/skills/use-eye
+```
+
+The skill is the integration path. There is no MCP server; the agent shells out to `use-eye`.
 
 ## How the phone connects
 
@@ -74,21 +103,6 @@ POST /control                   {"type":"torch","on":true}
                                 {"type":"pause","on":false}
 ```
 
-## MCP
-
-```json
-{
-  "mcpServers": {
-    "use-eye": {
-      "command": "bun",
-      "args": ["/absolute/path/to/use-eye/mcp.ts"]
-    }
-  }
-}
-```
-
-Tools: `eye_status`, `eye_capture` (returns an image), `eye_torch`, `eye_facing`, `eye_pause`.
-
 ## What the phone page gives you
 
 - Live viewfinder filling the screen, with framing marks that flare when the agent grabs a frame
@@ -99,7 +113,8 @@ Tools: `eye_status`, `eye_capture` (returns an image), `eye_torch`, `eye_facing`
 ## Development
 
 ```bash
-bun run build      # vite build → dist/
+bun run build      # vite build → dist/  +  tsdown → bin/use-eye.mjs
+bun run build:cli  # tsdown only
 bun run server     # bridge only (expects dist/ to exist)
 bun run typecheck
 bun test/mock-phone.ts   # simulates a phone; set USE_EYE_TOKEN first
