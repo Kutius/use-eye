@@ -18,6 +18,9 @@ This starts the bridge in the background, prints the phone URL and a QR code, th
 until a phone is connected and returns**. It says `waiting for phone`, then `connected`, and
 nothing in between. Use that waiting window to tell the user which URL to open.
 
+If `use-eye` is not on PATH, `npx use-eye start` works the same. The bridge needs
+[Bun](https://bun.sh); if the command says so, install Bun first and retry.
+
 Flags worth knowing:
 
 - `--no-wait` return as soon as the bridge is up, without waiting for the phone
@@ -37,10 +40,11 @@ command says `bridge not reachable`, that is what happened: run `use-eye start` 
 ## Look at something
 
 ```bash
-use-eye snap -o /tmp/look.jpg
+use-eye snap -o look.jpg
 ```
 
-Then Read `/tmp/look.jpg`. The command prints the absolute path it wrote.
+Then Read the absolute path the command prints. Use a path the caller gave you if they named
+one; otherwise a local `look.jpg` is fine.
 
 - Waits up to 4s for a fresh frame. On timeout the phone is paused or the screen is locked.
   Check `use-eye status`, ask the user to unlock and re-allow the camera.

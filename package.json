@@ -3,14 +3,38 @@
   "version": "0.1.0",
   "description": "Let an AI agent see through your phone camera. Open a webpage, point, let it look.",
   "type": "module",
+  "license": "MIT",
+  "author": "Kutius",
+  "keywords": [
+    "ai",
+    "agent",
+    "camera",
+    "phone",
+    "computer-vision",
+    "mcp-alternative",
+    "cli",
+    "vision"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kutius/use-eye.git"
+  },
+  "homepage": "https://github.com/Kutius/use-eye#readme",
+  "bugs": {
+    "url": "https://github.com/Kutius/use-eye/issues"
+  },
   "bin": {
     "use-eye": "./bin/use-eye.mjs"
   },
   "files": [
     "bin",
     "dist",
+    "server",
     "skill"
   ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "vite build --watch & bun --watch server/index.ts",
     "build": "vite build && tsdown",
@@ -22,11 +46,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@fontsource-variable/archivo": "^5.2.5",
     "qrcode": "^1.5.4",
     "selfsigned": "^2.4.1"
   },
   "devDependencies": {
+    "@fontsource-variable/archivo": "^5.2.5",
     "@types/bun": "^1.2.10",
     "@types/qrcode": "^1.5.5",
     "tsdown": "^0.23.1",

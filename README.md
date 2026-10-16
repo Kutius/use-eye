@@ -9,12 +9,11 @@ phone browser  ──JPEG over WebSocket──►  bridge (this machine)  ◄─
 ## Quick start
 
 ```bash
-bun install
-bun run build
-node bin/use-eye.mjs start
+npm i -g use-eye     # or: npx use-eye start
+use-eye start
 ```
 
-`start` brings the bridge up, prints the phone URL and QR code, waits until your phone is
+`start` brings the bridge up, prints the phone URL and a QR code, waits until your phone is
 connected, then returns. Open the URL on your phone and allow the camera.
 
 ```bash
@@ -32,12 +31,14 @@ Or just read the file the bridge keeps fresh:
 ~/.use-eye/latest.jpg
 ```
 
-If you want the bridge in the foreground with live logs instead, `bun run start`.
+**Requires [Bun](https://bun.sh)** to run the bridge (it is a `Bun.serve` app). The CLI itself
+is plain Node 20+, so `use-eye snap` and friends work anywhere; only `start` shells out to Bun.
+
+If you want the bridge in the foreground with live logs instead, `bun run start` from a clone.
 
 ## Agent CLI
 
-Built with tsdown into a single Node ESM file at `bin/use-eye.mjs`. `bun run build` produces it
-alongside the Vite output.
+Built with tsdown into a single Node ESM file at `bin/use-eye.mjs`.
 
 Every command returns control to the shell. `use-eye start` blocks only while it waits for a
 phone to connect, then hands the shell back with the bridge still running in the background.
@@ -68,14 +69,15 @@ log watching. `watch` without `--count` runs until interrupted.
 ## Skill for agents
 
 `skill/SKILL.md` teaches an agent how to use the CLI: start and wait for the phone, snap and
-read the image, aim with zoom/torch/facing, recover from failures, the privacy boundary. Copy it
-into your skills directory to make it loadable:
+read the image, aim with zoom/torch/facing, recover from failures, the privacy boundary. It is
+the integration path: there is no MCP server, the agent just shells out to `use-eye`.
+
+If you installed from npm the skill is inside the package. Copy it into your skills directory:
 
 ```bash
-cp -r skill ~/.claude/skills/use-eye
+# Claude Code
+cp -r "$(npm root -g)/use-eye/skill" ~/.claude/skills/use-eye
 ```
-
-The skill is the integration path. There is no MCP server; the agent shells out to `use-eye`.
 
 ## How the phone connects
 
@@ -87,7 +89,7 @@ The bridge picks the first thing that works, in this order:
 | **Cloudflare quick tunnel** | Public HTTPS URL for this session | nothing, just the link |
 | **LAN** | Self-signed HTTPS on your local network | accept the certificate warning once |
 
-`USE_EYE_TUNNEL=tailscale|cloudflared|lan bun run start` forces one of them.
+`USE_EYE_TUNNEL=tailscale|cloudflared|lan use-eye start` forces one of them.
 
 **Why HTTPS.** Browsers only expose `getUserMedia` in a secure context, so a plain
 `http://192.168.x.x` link has no camera API at all. The bridge therefore serves the phone page over
@@ -113,7 +115,7 @@ Override with `USE_EYE_PORT`, `USE_EYE_UPSTREAM_PORT`, `USE_EYE_AGENT_PORT`.
 Bound to `127.0.0.1:8788` only, so the tunnel never exposes it.
 
 ```
-GET  /status                    connection state, frame age, camera facing, zoom
+GET  /status                    connection state, frame age, camera facing, zoom, idleForMs
 GET  /frame.jpg                 latest frame
 GET  /frame.jpg?fresh=1         wait up to 3s for a new frame
      ?quality=0.82&maxw=1600&timeout=4000
@@ -137,11 +139,12 @@ POST /control                   {"type":"torch","on":true}
 ## Development
 
 ```bash
+bun install
 bun run build      # vite build → dist/  +  tsdown → bin/use-eye.mjs
 bun run build:cli  # tsdown only
 bun run server     # bridge only (expects dist/ to exist)
 bun run typecheck
-bun test/mock-phone.ts   # simulates a phone; set USE_EYE_TOKEN first
+bun test/mock-phone.ts   # simulates a phone; auto-discovers the token from /status
 ```
 
 `test/mock-phone.ts` is a fake phone that pushes JPEG frames and answers control messages, so the

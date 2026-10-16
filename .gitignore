@@ -3,6 +3,8 @@ dist/
 bin/
 .taste-skill/
 shots/
+frames/
+look.jpg
 test/body.json
 test/out.jpg
 test/snap.jpg

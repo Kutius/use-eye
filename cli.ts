@@ -221,6 +221,21 @@ function bridgeEnv(idleMinutes: number): NodeJS.ProcessEnv {
   return { ...process.env, USE_EYE_IDLE_MINUTES: String(idleMinutes) };
 }
 
+/**
+ * The bridge is a Bun server (Bun.serve). The CLI itself runs on Node 20+
+ * so `use-eye snap` works anywhere, but starting the bridge needs Bun.
+ */
+function requireBun(): void {
+  const probe = spawnSync(BUN, ["--version"], { stdio: "ignore", windowsHide: true });
+  if (probe.error || probe.status !== 0) {
+    die(
+      `the bridge needs Bun, and \`${BUN}\` is not on this machine.\n` +
+        `Install it from https://bun.sh then run \`use-eye start\` again.\n` +
+        `(The CLI itself is plain Node; only the bridge is Bun.)`,
+    );
+  }
+}
+
 async function stopBridge(): Promise<"stopped" | "not-running"> {
   const pid = readPid();
   const up = await bridgeUp();
@@ -264,6 +279,7 @@ async function ensureBridge(
     return { st: existing, alreadyRunning: true, pid: readPid() };
   }
   if (!root) die("cannot find the use-eye package root; run `bun run start` from the source tree");
+  requireBun();
 
   mkdirSync(STATE_DIR, { recursive: true });
   if (!existsSync(join(root, "dist", "phone.html"))) {
@@ -330,6 +346,7 @@ switch (cmd) {
 
     if (foreground) {
       if (!root) die("cannot find the use-eye package root; run `bun run start` from the source tree");
+      requireBun();
       if (!existsSync(join(root, "dist", "phone.html"))) {
         const r = spawnSync(BUN, ["run", "build:web"], {
           cwd: root,

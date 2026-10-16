@@ -5,11 +5,11 @@
     "": {
       "name": "use-eye",
       "dependencies": {
-        "@fontsource-variable/archivo": "^5.2.5",
         "qrcode": "^1.5.4",
         "selfsigned": "^2.4.1",
       },
       "devDependencies": {
+        "@fontsource-variable/archivo": "^5.2.5",
         "@types/bun": "^1.2.10",
         "@types/qrcode": "^1.5.5",
         "tsdown": "^0.23.1",
