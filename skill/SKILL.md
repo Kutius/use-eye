@@ -88,6 +88,7 @@ it down. Leaving it running is fine if more looks are coming.
 | `bridge ... does not own it` on stop | someone else started the bridge | ask them to stop it in that terminal |
 | image is black | lens covered, or dark scene | `use-eye torch on`, check the lens |
 | image is the wrong side | front camera | `use-eye facing environment` |
+| tally stuck on `starting`, rear view black | the QR scanner still holds the rear camera | ask them to close the camera/QR app and reload, or the page auto-falls back to the other camera |
 
 ## Privacy
 

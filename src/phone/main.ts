@@ -54,6 +54,26 @@ function hideHint() {
   hint.classList.remove("is-shown");
 }
 
+let cameraErrorMsg = "";
+
+/** Single source of truth for the tally label. */
+function updateTally() {
+  if (stage.classList.contains("is-error")) {
+    tallyLabel.textContent = cameraErrorMsg ? "denied" : "blocked";
+    return;
+  }
+  if (!stream) {
+    tallyLabel.textContent = "starting";
+    return;
+  }
+  const ready = ws?.readyState;
+  if (ready === WebSocket.OPEN) {
+    tallyLabel.textContent = paused ? "paused" : "live";
+    return;
+  }
+  tallyLabel.textContent = ready === WebSocket.CONNECTING ? "connecting" : "offline";
+}
+
 function setMode() {
   stage.classList.toggle("is-live", !paused && !!stream && ws?.readyState === WebSocket.OPEN);
   stage.classList.toggle("is-paused", paused);
@@ -64,6 +84,7 @@ function setMode() {
   (pauseIcon as HTMLElement).hidden = paused;
   btnPause.setAttribute("aria-label", paused ? "Resume stream" : "Pause stream");
   btnTorch.setAttribute("aria-pressed", String(torchOn));
+  updateTally();
 }
 
 function updateReadout() {
@@ -86,17 +107,35 @@ async function requestWakeLock() {
   }
 }
 
+async function openMedia(facing: Facing): Promise<MediaStream> {
+  // Constraints loosen in stages. The 1920x1080 wish can make some Android
+  // camera HALs stall instead of rejecting, and a QR scanner still holding
+  // the rear camera makes getUserMedia sit there forever.
+  const attempts: MediaStreamConstraints[] = [
+    { audio: false, video: { facingMode: { ideal: facing }, width: { ideal: 1920 }, height: { ideal: 1080 } } },
+    { audio: false, video: { facingMode: facing } },
+    { audio: false, video: true },
+  ];
+  let lastErr: unknown = null;
+  for (const constraints of attempts) {
+    try {
+      return await Promise.race([
+        navigator.mediaDevices.getUserMedia(constraints),
+        new Promise<never>((_, rej) =>
+          setTimeout(() => rej(new Error("camera did not respond in 5s")), 5000),
+        ),
+      ]);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr ?? new Error("camera unavailable");
+}
+
 async function startCamera() {
   stopCamera();
-  const constraints: MediaStreamConstraints = {
-    audio: false,
-    video: {
-      facingMode: { ideal: facing },
-      width: { ideal: 1920 },
-      height: { ideal: 1080 },
-    },
-  };
-  stream = await navigator.mediaDevices.getUserMedia(constraints);
+  updateTally();
+  stream = await openMedia(facing);
   video.srcObject = stream;
   // play() can sit pending forever on some mobile browsers. Never let it block
   // the rest of the boot: the stream is already attached and frames can be
@@ -213,7 +252,7 @@ function connect() {
   const url = `${proto}//${location.host}${location.pathname.replace(/\/$/, "")}/ws`;
   ws = new WebSocket(url);
   ws.binaryType = "arraybuffer";
-  tallyLabel.textContent = "connecting";
+  updateTally();
 
   ws.onopen = () => {
     reconnectDelay = 600;
@@ -236,7 +275,6 @@ function connect() {
       width: video.videoWidth,
       height: video.videoHeight,
     });
-    tallyLabel.textContent = paused ? "paused" : "live";
     btnTorch.disabled = !supportsTorch();
     startPushLoop();
     setMode();
@@ -316,7 +354,7 @@ function connect() {
   ws.onclose = () => {
     setMode();
     if (wsClosed) return;
-    tallyLabel.textContent = "offline";
+    updateTally();
     showHint("Connection lost. Reconnecting…");
     window.setTimeout(connect, reconnectDelay);
     reconnectDelay = Math.min(reconnectDelay * 1.7, 12000);
@@ -334,7 +372,8 @@ function connect() {
 async function ensureCameraPermission() {
   if (!navigator.mediaDevices?.getUserMedia) {
     stage.classList.add("is-error");
-    tallyLabel.textContent = "blocked";
+    cameraErrorMsg = "";
+    updateTally();
     showHint(
       location.protocol === "https:" || location.hostname === "localhost"
         ? "This browser does not expose camera APIs."
@@ -383,7 +422,6 @@ btnFlip.addEventListener("click", async () => {
 btnPause.addEventListener("click", () => {
   paused = !paused;
   setMode();
-  tallyLabel.textContent = paused ? "paused" : ws?.readyState === WebSocket.OPEN ? "live" : "offline";
   showHint(paused ? "Stream paused. The agent sees nothing new." : "Stream resumed.");
   window.setTimeout(hideHint, 1400);
   sendJson({
@@ -410,17 +448,39 @@ document.addEventListener("visibilitychange", () => {
 void (async () => {
   const ok = await ensureCameraPermission();
   if (!ok) return;
+
+  // Bring the socket up first so the bridge sees the phone even while the
+  // camera is still opening. Otherwise a stalled rear camera hides the
+  // connection and the tally never leaves "starting".
+  connect();
+
   try {
     await startCamera();
   } catch {
-    stage.classList.add("is-error");
-    tallyLabel.textContent = "denied";
-    showHint("Camera permission was refused. Allow it in the browser and reload.", true);
-    return;
+    // Rear cameras get claimed by the QR scanner that opened this page.
+    // Fall back to whatever camera answers before giving up.
+    try {
+      facing = facing === "environment" ? "user" : "environment";
+      await startCamera();
+      showHint("Rear camera was busy. Using the other one.");
+      sendJson({
+        t: "state",
+        facing,
+        torch: torchOn,
+        paused,
+        width: video.videoWidth,
+        height: video.videoHeight,
+      });
+    } catch {
+      stage.classList.add("is-error");
+      cameraErrorMsg = "no camera";
+      updateTally();
+      showHint("No camera responded. Close other camera apps and reload.", true);
+      return;
+    }
   }
   btnTorch.disabled = !supportsTorch();
   await requestWakeLock();
-  connect();
   showHint("Point at what the agent should see.");
   window.setTimeout(hideHint, 2600);
 })();
