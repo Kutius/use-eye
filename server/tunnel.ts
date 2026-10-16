@@ -29,11 +29,11 @@ const has = (cmd: string): boolean => {
   }
 };
 
-export function lanAddresses(port: number): string[] {
+export function lanAddresses(scheme: string, port: number): string[] {
   const out: string[] = [];
   for (const infos of Object.values(os.networkInterfaces())) {
     for (const info of infos ?? []) {
-      if (info.family === "IPv4" && !info.internal) out.push(`http://${info.address}:${port}/`);
+      if (info.family === "IPv4" && !info.internal) out.push(`${scheme}://${info.address}:${port}/`);
     }
   }
   return out;
@@ -41,20 +41,26 @@ export function lanAddresses(port: number): string[] {
 
 /**
  * Preference order: Tailscale Serve (valid cert, no third-party relay),
- * then a Cloudflare quick tunnel (public HTTPS), then plain LAN HTTP.
+ * then a Cloudflare quick tunnel (public HTTPS), then LAN self-signed HTTPS.
+ *
+ * `publicPort` is the HTTPS port a phone opens. `upstreamPort` is the
+ * plain-HTTP loopback twin: tunnels terminate TLS themselves and will not
+ * accept a self-signed origin.
  */
 export async function openTunnel(
-  port: number,
+  publicPort: number,
+  upstreamPort: number,
   prefer: "auto" | "tailscale" | "cloudflared" | "lan" = "auto",
 ): Promise<TunnelInfo> {
-  const lans = lanAddresses(port);
-  const lanUrl = lans[0] ?? `http://127.0.0.1:${port}/`;
+  const lans = lanAddresses("https", publicPort);
+  const upstream = `http://127.0.0.1:${upstreamPort}`;
+  const lanUrl = lans[0] ?? `https://127.0.0.1:${publicPort}/`;
   const lanInfo = (): TunnelInfo => ({
     kind: "lan",
-    label: "LAN",
+    label: "LAN (self-signed HTTPS)",
     url: lanUrl,
     note:
-      "Plain HTTP. Camera access needs a secure context, so on a phone this URL only works if you first add it to chrome://flags/#unsafely-treat-insecure-origin-as-secure (Android). iOS cannot. Prefer the Tailscale link above.",
+      "HTTPS with a self-signed certificate, so the browser will grant camera permission. Accept the certificate warning on the first visit. iOS may refuse a self-signed cert; use the Tailscale link there.",
   });
 
   if (prefer === "lan") return lanInfo();
@@ -71,7 +77,7 @@ export async function openTunnel(
         "--bg",
         "--set-path",
         "/",
-        `http://127.0.0.1:${port}`,
+        upstream,
       ]);
       const serveStatus = tryRun("tailscale", ["serve", "status", "--json"]);
       let url: string | null = null;
@@ -98,7 +104,7 @@ export async function openTunnel(
   if (prefer !== "tailscale" && has("cloudflared")) {
     const child: ChildProcess = spawn(
       "cloudflared",
-      ["tunnel", "--url", `http://127.0.0.1:${port}`, "--no-autoupdate"],
+      ["tunnel", "--url", upstream, "--no-autoupdate"],
       { windowsHide: true },
     );
     const url = await new Promise<string | null>((resolve) => {

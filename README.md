@@ -37,16 +37,28 @@ The bridge picks the first thing that works, in this order:
 |---|---|---|
 | **Tailscale Serve** | HTTPS on your tailnet, valid cert, frames never touch a third party | Tailscale app, same tailnet |
 | **Cloudflare quick tunnel** | Public HTTPS URL for this session | nothing, just the link |
-| **LAN** | Plain HTTP on your local network | see note below |
+| **LAN** | Self-signed HTTPS on your local network | accept the certificate warning once |
 
 `USE_EYE_TUNNEL=tailscale|cloudflared|lan bun run start` forces one of them.
 
-**LAN note.** Browsers only expose `getUserMedia` in a secure context. A plain `http://192.168.x.x`
-link works on Android if you first add that origin to
-`chrome://flags/#unsafely-treat-insecure-origin-as-secure`. iOS cannot do this. Prefer Tailscale.
+**Why HTTPS.** Browsers only expose `getUserMedia` in a secure context, so a plain
+`http://192.168.x.x` link has no camera API at all. The bridge therefore serves the phone page over
+HTTPS with a self-signed certificate minted into `~/.use-eye/`. On the first visit the browser will
+warn about the certificate: accept it, then reload. iOS is strict about self-signed certs and may
+refuse them outright; use the Tailscale link there, which carries a real certificate.
 
 The phone URL contains a random token in the path. Anyone holding that link can drive the camera,
 so treat it as a credential. A new run mints a new token.
+
+## Listeners
+
+| Port | Scheme | Bound to | Serves |
+|---|---|---|---|
+| `8787` | HTTPS | all interfaces | the phone page and its WebSocket |
+| `8786` | HTTP | `127.0.0.1` | tunnel upstream (Tailscale / cloudflared dial this) |
+| `8788` | HTTP | `127.0.0.1` | agent API, never exposed to the tunnel |
+
+Override with `USE_EYE_PORT`, `USE_EYE_UPSTREAM_PORT`, `USE_EYE_AGENT_PORT`.
 
 ## Agent API
 
@@ -94,7 +106,9 @@ bun test/mock-phone.ts   # simulates a phone; set USE_EYE_TOKEN first
 ```
 
 `test/mock-phone.ts` is a fake phone that pushes JPEG frames and answers control messages, so the
-whole pipeline can be exercised without a handset.
+whole pipeline can be exercised without a handset. It dials the plain-HTTP loopback twin on `8786`,
+which is what a tunnel would use. `test/wss-probe.ts` checks the TLS WebSocket path a real phone
+takes (add `NODE_TLS_REJECT_UNAUTHORIZED=0` for the self-signed cert).
 
 ## Privacy
 

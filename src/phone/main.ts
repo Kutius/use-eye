@@ -319,12 +319,12 @@ async function ensureCameraPermission() {
     showHint(
       location.protocol === "https:" || location.hostname === "localhost"
         ? "This browser does not expose camera APIs."
-        : "Camera needs HTTPS. Open the Tailscale or tunnel link instead of a plain LAN address.",
+        : "Camera needs HTTPS. Open the HTTPS link the use-eye server printed.",
       true,
     );
     sheetUrl.textContent = location.href;
     sheetNote.textContent =
-      "Browsers only allow getUserMedia in a secure context. Use the HTTPS link printed by the use-eye server, or add this origin to chrome://flags/#unsafely-treat-insecure-origin-as-secure on Android.";
+      "Browsers only allow getUserMedia in a secure context. use-eye serves HTTPS with a self-signed certificate: accept the certificate warning on the first visit, then reload. If this browser still refuses the camera, use the Tailscale link instead, which has a valid certificate.";
     sheet.hidden = false;
     return false;
   }

@@ -3,7 +3,10 @@
  * Usage: bun test/mock-phone.ts  (bridge must be running)
  */
 const TOKEN = process.env.USE_EYE_TOKEN ?? "";
-const BASE = process.env.USE_EYE_PHONE_BASE ?? "http://127.0.0.1:8787";
+// Default to the plain-HTTP loopback twin. A phone would use the HTTPS port instead,
+// but a script has no secure-context requirement and Bun's WebSocket client does not
+// want a self-signed cert.
+const BASE = process.env.USE_EYE_PHONE_BASE ?? "http://127.0.0.1:8786";
 if (!TOKEN) {
   console.error("set USE_EYE_TOKEN to the token printed by the server");
   process.exit(1);

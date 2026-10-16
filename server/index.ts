@@ -4,9 +4,11 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import QRCode from "qrcode";
 import { eye, LATEST_JPG } from "./state.ts";
 import { openTunnel, lanAddresses } from "./tunnel.ts";
+import { loadOrCreateCert } from "./cert.ts";
 import type { ServerMsg } from "./protocol.ts";
 
 const PUBLIC_PORT = Number(process.env.USE_EYE_PORT ?? 8787);
+const UPSTREAM_PORT = Number(process.env.USE_EYE_UPSTREAM_PORT ?? 8786);
 const AGENT_PORT = Number(process.env.USE_EYE_AGENT_PORT ?? 8788);
 const DIST = join(import.meta.dirname, "..", "dist");
 const TOKEN = process.env.USE_EYE_TOKEN ?? randomBytes(9).toString("base64url");
@@ -67,12 +69,15 @@ function applyRemote(data: string | Buffer | Uint8Array) {
   }
 }
 
-// ---------------------------------------------------------------- public (phone)
-const phoneServer = Bun.serve({
-  port: PUBLIC_PORT,
-  hostname: "0.0.0.0",
-  idleTimeout: 120,
-  async fetch(req, server) {
+// ---------------------------------------------------------------- phone surface
+// Shared by the HTTPS listener a phone opens directly and the plain-HTTP loopback
+// twin tunnels dial back to. Tunnels terminate TLS themselves and will not accept
+// a self-signed origin, so the twin must stay plain HTTP on loopback only.
+type Upgrade = { upgrade(req: Request): boolean };
+type WsLike = { send(data: string): void; close(code?: number, reason?: string): void };
+
+function phoneFetch(req: Request, server: Upgrade): Response | undefined | Promise<Response | undefined> {
+  return (async () => {
     const url = new URL(req.url);
     const path = url.pathname;
 
@@ -88,34 +93,55 @@ const phoneServer = Bun.serve({
     }
     if (path.startsWith(`${PHONE_PATH}/`)) {
       const rel = path.slice(PHONE_PATH.length + 1);
-      return (
-        (await serveStatic(rel)) ??
-        new Response("not found", { status: 404 })
-      );
+      return (await serveStatic(rel)) ?? new Response("not found", { status: 404 });
     }
     return new Response("use-eye: token required", { status: 404 });
+  })();
+}
+
+const phoneWebsocket = {
+  idleTimeout: 120,
+  maxPayloadLength: 4 * 1024 * 1024,
+  open(ws: WsLike) {
+    const send = (msg: ServerMsg) => ws.send(JSON.stringify(msg));
+    eye.attachPhone(send, () => {
+      try {
+        ws.close(1000, "bye");
+      } catch {
+        /* ignore */
+      }
+    });
+    (ws as unknown as { __attached?: boolean }).__attached = true;
   },
-  websocket: {
-    idleTimeout: 120,
-    maxPayloadLength: 4 * 1024 * 1024,
-    open(ws) {
-      const send = (msg: ServerMsg) => ws.send(JSON.stringify(msg));
-      eye.attachPhone(send, () => {
-        try {
-          ws.close(1000, "bye");
-        } catch {
-          /* ignore */
-        }
-      });
-      (ws as unknown as { __attached?: boolean }).__attached = true;
-    },
-    message(_ws, data) {
-      applyRemote(data as never);
-    },
-    close() {
-      eye.detachPhone();
-    },
+  message(_ws: unknown, data: string | Buffer | Uint8Array) {
+    applyRemote(data);
   },
+  close() {
+    eye.detachPhone();
+  },
+};
+
+const tls = loadOrCreateCert();
+
+// Phone-facing HTTPS. This is the endpoint that must be a secure context or the
+// browser will not expose getUserMedia at all.
+const phoneServer = Bun.serve({
+  port: PUBLIC_PORT,
+  hostname: "0.0.0.0",
+  idleTimeout: 120,
+  tls: { key: tls.key, cert: tls.cert },
+  fetch: phoneFetch,
+  websocket: phoneWebsocket,
+});
+
+// Plain-HTTP twin on loopback only. Tailscale Serve and cloudflared both point
+// here so their own valid certificates stand in for ours.
+const upstreamServer = Bun.serve({
+  port: UPSTREAM_PORT,
+  hostname: "127.0.0.1",
+  idleTimeout: 120,
+  fetch: phoneFetch,
+  websocket: phoneWebsocket,
 });
 
 // ---------------------------------------------------------------- agent (localhost)
@@ -200,7 +226,7 @@ async function main() {
     | "tailscale"
     | "cloudflared"
     | "lan";
-  const tunnel = await openTunnel(PUBLIC_PORT, prefer);
+  const tunnel = await openTunnel(PUBLIC_PORT, UPSTREAM_PORT, prefer);
   PHONE_BASE = tunnel.url.replace(/\/$/, "");
 
   const phone = `${PHONE_BASE}${PHONE_PATH}/`;
@@ -210,7 +236,8 @@ async function main() {
     `  open on your phone   ${phone}`,
     `  tunnel               ${tunnel.label}`,
     `                       ${tunnel.note}`,
-    `  lan                  ${lanAddresses(PUBLIC_PORT).join("  ") || "none"}`,
+    `  lan                  ${lanAddresses("https", PUBLIC_PORT).join("  ") || "none"}`,
+    `  certificate          ${tls.path}`,
     `  agent api            http://127.0.0.1:${AGENT_PORT}/status`,
     `  frame                http://127.0.0.1:${AGENT_PORT}/frame.jpg`,
     `  latest.jpg           ${LATEST_JPG}`,
@@ -224,6 +251,7 @@ async function main() {
   const shutdown = () => {
     tunnel.stop?.();
     phoneServer.stop();
+    upstreamServer.stop();
     agentServer.stop();
     process.exit(0);
   };
@@ -232,6 +260,7 @@ async function main() {
 }
 
 void phoneServer;
+void upstreamServer;
 void agentServer;
 main().catch((e) => {
   console.error(e);
