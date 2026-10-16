@@ -24,7 +24,7 @@
     "url": "https://github.com/Kutius/use-eye/issues"
   },
   "bin": {
-    "use-eye": "./bin/use-eye.mjs"
+    "use-eye": "bin/use-eye.mjs"
   },
   "files": [
     "bin",
