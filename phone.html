@@ -27,6 +27,12 @@
           <span class="tally" id="tally"></span>
           <span class="tally-label" id="tally-label">idle</span>
         </div>
+        <script>
+          // Boot marker: flips as soon as HTML parses. If you still see "idle"
+          // the module bundle never ran (check the certificate and the console).
+          // If you see "boot" and nothing else, the module failed to load.
+          document.getElementById("tally-label").textContent = "boot";
+        </script>
         <div class="readout" id="readout">
           <span id="read-dims">&mdash;</span>
           <span class="sep"></span>

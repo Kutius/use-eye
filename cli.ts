@@ -21,6 +21,7 @@ import {
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import QRCode from "qrcode";
 
 const AGENT = process.env.USE_EYE_AGENT ?? "http://127.0.0.1:8788";
 const STATE_DIR = join(homedir(), ".use-eye");
@@ -162,44 +163,35 @@ async function waitForBridge(ms: number): Promise<Record<string, unknown>> {
 }
 
 /**
- * Block until a phone is connected. One live line, no scrollback spam.
- * Resolves with the status snapshot that saw the phone.
+ * Block until a phone is connected. Say "waiting" once and "connected" once.
+ * No periodic status lines: they only bury the URL the user needs to open.
  */
 async function waitForPhone(ms: number, phoneUrl: string): Promise<Record<string, unknown>> {
   const deadline = Date.now() + ms;
-  const started = Date.now();
-  const tty = !!process.stdout.isTTY;
-  let lastPrint = 0;
-  const tick = (force = false) => {
-    const elapsed = Math.round((Date.now() - started) / 1000);
-    const line = `waiting for phone  ${elapsed}s  ${phoneUrl}`;
-    if (tty) {
-      process.stdout.write(`\r${line}${" ".repeat(24)}`);
-      return;
-    }
-    // Non-TTY (an agent's shell): one line every 2s, not every poll.
-    const now = Date.now();
-    if (force || now - lastPrint >= 2000) {
-      process.stdout.write(`${line}\n`);
-      lastPrint = now;
-    }
-  };
-  tick(true);
+  process.stdout.write(`waiting for phone\n`);
   for (;;) {
     const st = await readStatus();
     if (st?.phoneConnected) {
-      if (tty) process.stdout.write("\r" + " ".repeat(72) + "\r");
+      process.stdout.write("connected\n");
       return st;
     }
     if (Date.now() > deadline) {
-      if (tty) process.stdout.write("\n");
       die(
         `no phone connected within ${Math.round(ms / 1000)}s.\n` +
           `open this on the phone, allow the camera, then run \`use-eye wait\`:\n  ${phoneUrl}`,
       );
     }
-    tick();
-    await sleep(500);
+    await sleep(400);
+  }
+}
+
+/** Print a terminal QR, silently ignored if the terminal cannot render one. */
+async function printQr(text: string): Promise<void> {
+  try {
+    const qr = await QRCode.toString(text, { type: "terminal", small: true, margin: 1 });
+    process.stdout.write(qr + "\n");
+  } catch {
+    /* QR is decoration; the URL above is what matters */
   }
 }
 
@@ -347,23 +339,23 @@ switch (cmd) {
             phoneUrl,
             qr: `${AGENT}/`,
             log: LOG_FILE,
-            waitingFor: "phone",
+            waitingFor: noWait ? undefined : "phone",
           },
           null,
           2,
         ) + "\n",
       );
     } else {
-      process.stdout.write(`bridge           pid ${pid ?? "?"}${alreadyRunning ? " (already running)" : ""}\n`);
-      process.stdout.write(`phone            ${phoneUrl}\n`);
-      process.stdout.write(`qr               ${AGENT}/\n`);
-      process.stdout.write(`agent            ${AGENT}\n`);
+      process.stdout.write(`phone  ${phoneUrl}\n`);
+      process.stdout.write(`agent  ${AGENT}\n\n`);
+      await printQr(phoneUrl);
     }
 
     if (noWait) break;
 
     // The hang is the point: hold the shell until the phone is attached,
-    // then give it back with the bridge still up.
+    // then give it back with the bridge still up. Say "waiting" once and
+    // "connected" once, nothing in between.
     const after = await waitForPhone(timeoutMs, phoneUrl);
     const out = {
       ok: true,
@@ -377,10 +369,6 @@ switch (cmd) {
       log: LOG_FILE,
     };
     if (json) process.stdout.write(JSON.stringify(out, null, 2) + "\n");
-    else {
-      process.stdout.write(`phone connected  ${String(after.facing ?? "?")} camera\n`);
-      process.stdout.write(`agent            ${AGENT}\n`);
-    }
     break;
   }
 

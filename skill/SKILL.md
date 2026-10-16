@@ -14,9 +14,9 @@ from a phone browser and hands them to you over a local CLI.
 use-eye start
 ```
 
-This starts the bridge in the background, prints the phone URL, then **waits until a phone is
-connected and returns**. The shell comes back as soon as the camera is live. Use that waiting
-window to tell the user which URL to open.
+This starts the bridge in the background, prints the phone URL and a QR code, then **waits
+until a phone is connected and returns**. It says `waiting for phone`, then `connected`, and
+nothing in between. Use that waiting window to tell the user which URL to open.
 
 Flags worth knowing:
 

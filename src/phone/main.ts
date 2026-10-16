@@ -40,6 +40,10 @@ let wakeLock: { release: () => Promise<void> } | null = null;
 const canvas = document.createElement("canvas");
 const ctx = canvas.getContext("2d", { willReadFrequently: false })!;
 
+// First thing the module does. If the label is still "boot", this bundle never
+// ran; if it is "starting", we are inside getUserMedia / video.play().
+tallyLabel.textContent = "starting";
+
 function showHint(text: string, alert = false) {
   hint.textContent = text;
   hint.classList.toggle("is-alert", alert);
@@ -94,7 +98,22 @@ async function startCamera() {
   };
   stream = await navigator.mediaDevices.getUserMedia(constraints);
   video.srcObject = stream;
-  await video.play();
+  // play() can sit pending forever on some mobile browsers. Never let it block
+  // the rest of the boot: the stream is already attached and frames can be
+  // grabbed from the element even if the promise has not settled.
+  try {
+    await Promise.race([
+      video.play(),
+      new Promise((r) => setTimeout(r, 2500)),
+    ]);
+  } catch {
+    showHint("Tap the screen to start the preview.");
+    const kick = () => {
+      void video.play().catch(() => {});
+      window.removeEventListener("pointerdown", kick);
+    };
+    window.addEventListener("pointerdown", kick);
+  }
   updateReadout();
   hideHint();
   setMode();
