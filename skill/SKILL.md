@@ -8,8 +8,8 @@ description: Look through a phone camera from the agent. Use when the user wants
 You can see through the user's phone camera. A bridge on this machine receives JPEG frames
 from a phone browser and hands them to you over a local CLI.
 
-Run every command as `npx use-eye ...`. Do not install it globally: `npx` is enough and
-keeps the machine clean.
+Run the CLI as `npx use-eye ...`. A global `npm i -g use-eye` works too and just drops the
+`use-eye` command on PATH; `npx` is the shorter path when it is not installed.
 
 ```bash
 npx use-eye start

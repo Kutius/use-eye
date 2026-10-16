@@ -44,6 +44,31 @@ On the machine the agent runs on:
 On the phone: a browser. Nothing to install. The page is served over HTTPS, because browsers
 only allow the camera in a secure context.
 
+## CLI
+
+`npx use-eye <command>`. A global install (`npm i -g use-eye`) gives you the bare `use-eye`
+command; the two are the same tool.
+
+```
+use-eye start [--timeout 120] [--no-wait] [--idle-timeout 10] [--json]
+               start the bridge, print the phone URL + QR, wait for the phone, return
+use-eye stop                 stop the background bridge
+use-eye restart              stop + start
+use-eye status               JSON state: connection, frame age, zoom, idle time
+use-eye wait [--timeout 60]  block until a phone connects
+use-eye snap [-o out.jpg]    save a fresh frame, print the absolute path
+use-eye zoom [N|in|out]      show or set zoom (1 = widest, max 8x)
+use-eye torch on|off         flashlight
+use-eye facing user|environment
+use-eye pause on|off         stop / resume frames leaving the phone
+use-eye watch [--fps 1] [--count 10]
+                             stream frames into ./frames/
+```
+
+Every command returns control to the shell. `start` blocks only while it waits for the phone,
+then leaves the bridge running in the background. `USE_EYE_AGENT` points at the agent port
+(default `http://127.0.0.1:8788`).
+
 ## What you get
 
 The agent drives a small local bridge through `npx use-eye`. Your phone opens one HTTPS page
