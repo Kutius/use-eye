@@ -41,6 +41,8 @@ const usage = `use-eye — let an AI agent see through your phone camera
   use-eye status               bridge state as JSON
   use-eye wait [--timeout 60]  wait for a phone to connect
   use-eye snap [-o out.jpg]    save a fresh frame (waits up to 4s)
+  use-eye zoom [N|in|out]      show or set zoom (1 = widest, max 8x)
+                               zoom in / out walk a 1 1.5 2 3 4 6 8 ladder
   use-eye torch on|off
   use-eye facing user|environment
   use-eye pause on|off
@@ -85,9 +87,10 @@ async function control(body: Record<string, unknown>) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
-  const j = (await res.json()) as { ok: boolean; err?: string };
+  const j = (await res.json()) as { ok: boolean; err?: string; detail?: string };
   if (!res.ok || !j.ok) die(`failed: ${j.err ?? res.status}`);
-  process.stdout.write("ok\n");
+  // Surface the phone's answer when it has one: a zoom clamp, for example.
+  process.stdout.write(j.detail ? `ok ${j.detail}\n` : "ok\n");
 }
 
 /** Walk up from the bundle to the package root (the dir holding package.json). */
@@ -421,6 +424,34 @@ switch (cmd) {
     const abs = resolve(out);
     writeFileSync(abs, buf);
     process.stdout.write(`${abs}  ${buf.byteLength} bytes  age ${res.headers.get("x-frame-age-ms")}ms\n`);
+    break;
+  }
+
+  case "zoom": {
+    const arg = rest[0];
+    const st = await readStatus();
+    if (!st) die(`bridge not reachable at ${AGENT} (connection refused). Run \`use-eye start\`.`);
+
+    if (arg === undefined) {
+      const z = Number(st.zoom ?? 1);
+      process.stdout.write(`${z.toFixed(1)}x\n`);
+      break;
+    }
+
+    // Camera zoom feels like a ladder, not a float you have to invent.
+    const STEPS = [1, 1.5, 2, 3, 4, 6, 8];
+    let level: number;
+    if (arg === "in" || arg === "out") {
+      const cur = Number(st.zoom ?? 1);
+      level =
+        arg === "in"
+          ? (STEPS.find((s) => s > cur + 0.05) ?? 8)
+          : ([...STEPS].reverse().find((s) => s < cur - 0.05) ?? 1);
+    } else {
+      level = Number(arg);
+      if (!Number.isFinite(level) || level <= 0) die("usage: use-eye zoom [N|in|out]");
+    }
+    await control({ type: "zoom", level });
     break;
   }
 

@@ -53,10 +53,10 @@ function framePacket(w: number, h: number): Uint8Array {
 }
 
 let pushTimer: ReturnType<typeof setInterval> | null = null;
-const st = { facing: "environment" as string, torch: false, paused: false };
+const st = { facing: "environment" as string, torch: false, paused: false, zoom: 1 };
 
 function sendState() {
-  ws.send(JSON.stringify({ t: "state", ...st, width: 64, height: 48 }));
+  ws.send(JSON.stringify({ t: "state", ...st, width: 64, height: 48, cam: "ok" }));
 }
 
 ws.onopen = () => {
@@ -90,6 +90,10 @@ ws.onmessage = (ev) => {
     st.paused = msg.on;
     sendState();
     ws.send(JSON.stringify({ t: "ack", id: msg.id, ok: true }));
+  } else if (msg.t === "zoom") {
+    st.zoom = Math.min(Math.max(Number(msg.level) || 1, 1), 8);
+    sendState();
+    ws.send(JSON.stringify({ t: "ack", id: msg.id, ok: true, detail: `${st.zoom.toFixed(1)}x` }));
   }
 };
 

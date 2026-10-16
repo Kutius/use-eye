@@ -17,7 +17,7 @@ export const LATEST_JPG = join(STATE_DIR, "latest.jpg");
 export const LATEST_JSON = join(STATE_DIR, "status.json");
 
 type PendingAck = {
-  resolve: (v: { ok: boolean; err?: string }) => void;
+  resolve: (v: { ok: boolean; err?: string; detail?: string }) => void;
   timer: Timer;
 };
 
@@ -33,6 +33,8 @@ class EyeState {
   facing: Facing = "environment";
   torch = false;
   paused = false;
+  /** Multiplier, 1 = widest. The phone clamps this to what it can actually do. */
+  zoom = 1;
   cameraNote = "";
   params: StreamParams = { ...DEFAULT_STREAM };
   connectedAt: number | null = null;
@@ -89,6 +91,7 @@ class EyeState {
         this.facing = msg.facing;
         this.torch = msg.torch;
         this.paused = msg.paused;
+        if (typeof msg.zoom === "number" && msg.zoom > 0) this.zoom = msg.zoom;
         if (msg.cam !== undefined) this.cameraNote = msg.cam;
         break;
       case "ack": {
@@ -96,7 +99,7 @@ class EyeState {
         if (!p) break;
         clearTimeout(p.timer);
         this.pending.delete(msg.id);
-        p.resolve(msg.ok ? { ok: true, err: msg.detail } : { ok: false, err: msg.err });
+        p.resolve(msg.ok ? { ok: true, detail: msg.detail } : { ok: false, err: msg.err });
         break;
       }
       case "bye":
@@ -138,7 +141,7 @@ class EyeState {
     });
   }
 
-  control(req: ControlRequest, timeoutMs = 4000): Promise<{ ok: boolean; err?: string }> {
+  control(req: ControlRequest, timeoutMs = 4000): Promise<{ ok: boolean; err?: string; detail?: string }> {
     const send = this.phoneSend;
     if (!send) return Promise.resolve({ ok: false, err: "no phone connected" });
     const id = this.nextId();
@@ -162,6 +165,9 @@ class EyeState {
           this.params = { ...this.params, ...req.params };
           send({ t: "params", params: this.params });
           break;
+        case "zoom":
+          send({ t: "zoom", id, level: req.level });
+          break;
       }
     });
   }
@@ -176,6 +182,7 @@ class EyeState {
       facing: this.facing,
       torch: this.torch,
       paused: this.paused,
+      zoom: this.zoom,
       camera: this.cameraNote,
       params: this.params,
       frame: this.frame

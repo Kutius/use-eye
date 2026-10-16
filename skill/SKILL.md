@@ -46,6 +46,10 @@ Then Read `/tmp/look.jpg`. The command prints the absolute path it wrote.
 ## Aim the camera
 
 ```bash
+use-eye zoom 2              # 2x crop on the subject (1 = widest, max 8x)
+use-eye zoom 1              # back to the full frame
+use-eye zoom in             # step up the 1 1.5 2 3 4 6 8 ladder
+use-eye zoom out
 use-eye torch on            # flashlight for dark scenes
 use-eye torch off
 use-eye facing user         # front camera
@@ -56,6 +60,10 @@ use-eye pause off
 
 The user is holding the phone. You cannot aim it. Say where to point: "hold it about 20cm
 above the label", "step back so the whole board fits". Then snap.
+
+Zoom is a centre crop of what the camera sees. Use it when the subject is too small in the
+frame and the user cannot get closer. Prefer moving closer first: a crop loses pixels. Zoom
+is also on the phone, pinch to set it and double-tap for 1x.
 
 `torch` is the one control to use freely. Do not flip `facing` unless the user asks, or the
 scene is clearly on the selfie side.
@@ -88,6 +96,8 @@ it down. Leaving it running is fine if more looks are coming.
 | `bridge ... does not own it` on stop | someone else started the bridge | ask them to stop it in that terminal |
 | image is black | lens covered, or dark scene | `use-eye torch on`, check the lens |
 | image is the wrong side | front camera | `use-eye facing environment` |
+| image is blurry or too tight | leftover zoom, or the 2x lens | `use-eye zoom 1`, check `use-eye status` for the zoom value |
+| text is still too small to read | subject is far away | `use-eye zoom 2` or `use-eye zoom 3`, then snap again |
 | tally stuck on `starting`, rear view black | the QR scanner still holds the rear camera | ask them to close the camera/QR app and reload, or the page auto-falls back to the other camera |
 
 ## Privacy

@@ -21,6 +21,7 @@ type Status = {
   facing: string;
   torch: boolean;
   paused: boolean;
+  zoom: number;
   params: { pushMs: number; quality: number; maxW: number };
   frame: { ageMs: number; width: number; height: number; seq: number; bytes: number } | null;
   phoneUrl: string;
@@ -42,6 +43,7 @@ function describe(s: Status) {
   else if (s.frame) bits.push(`frame ${s.frame.width}×${s.frame.height}, ${Math.round(s.frame.ageMs / 1000)}s old`);
   bits.push(s.facing === "user" ? "front camera" : "rear camera");
   if (s.torch) bits.push("torch on");
+  if (typeof s.zoom === "number" && s.zoom > 1.05) bits.push(`${s.zoom.toFixed(1)}x zoom`);
   return bits.join(" · ");
 }
 
@@ -85,6 +87,7 @@ async function boot() {
     `POST ${agent}/control`,
     `     {"type":"torch","on":true}`,
     `     {"type":"facing","mode":"environment"}`,
+    `     {"type":"zoom","level":2}`,
     `     {"type":"pause","on":false}`,
   ].join("\n");
   disk.textContent = "Read tool →  ~/.use-eye/latest.jpg";

@@ -185,7 +185,7 @@ const agentServer = Bun.serve({
     if (path === "/control" && req.method === "POST") {
       const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
       const t = body.type;
-      let result: { ok: boolean; err?: string };
+      let result: { ok: boolean; err?: string; detail?: string };
       if (t === "torch") result = await eye.control({ type: "torch", on: !!body.on });
       else if (t === "facing")
         result = await eye.control({
@@ -193,6 +193,12 @@ const agentServer = Bun.serve({
           mode: body.mode === "user" ? "user" : "environment",
         });
       else if (t === "pause") result = await eye.control({ type: "pause", on: !!body.on });
+      else if (t === "zoom") {
+        const level = Number(body.level);
+        result = Number.isFinite(level) && level > 0
+          ? await eye.control({ type: "zoom", level })
+          : { ok: false, err: "zoom level must be a positive number" };
+      }
       else if (t === "params")
         result = await eye.control({ type: "params", params: (body.params ?? {}) as never });
       else result = { ok: false, err: `unknown control type: ${String(t)}` };

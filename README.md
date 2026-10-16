@@ -19,6 +19,7 @@ connected, then returns. Open the URL on your phone and allow the camera.
 
 ```bash
 use-eye snap -o look.jpg   # grab a frame now
+use-eye zoom 2             # crop in on the subject
 use-eye torch on           # flashlight
 use-eye facing user        # front camera
 use-eye status             # JSON state
@@ -49,6 +50,7 @@ use-eye restart              stop + start
 use-eye status               bridge state as JSON
 use-eye wait [--timeout 60]  wait for a phone to connect
 use-eye snap [-o out.jpg]    save a fresh frame, print the absolute path
+use-eye zoom [N|in|out]      show or set zoom (1 = widest, max 8x)
 use-eye torch on|off
 use-eye facing user|environment
 use-eye pause on|off
@@ -63,7 +65,7 @@ log watching. `watch` without `--count` runs until interrupted.
 ## Skill for agents
 
 `skill/SKILL.md` teaches an agent how to use the CLI: start and wait for the phone, snap and
-read the image, aim with torch/facing, recover from failures, the privacy boundary. Copy it
+read the image, aim with zoom/torch/facing, recover from failures, the privacy boundary. Copy it
 into your skills directory to make it loadable:
 
 ```bash
@@ -108,12 +110,13 @@ Override with `USE_EYE_PORT`, `USE_EYE_UPSTREAM_PORT`, `USE_EYE_AGENT_PORT`.
 Bound to `127.0.0.1:8788` only, so the tunnel never exposes it.
 
 ```
-GET  /status                    connection state, frame age, camera facing
+GET  /status                    connection state, frame age, camera facing, zoom
 GET  /frame.jpg                 latest frame
 GET  /frame.jpg?fresh=1         wait up to 3s for a new frame
      ?quality=0.82&maxw=1600&timeout=4000
 POST /control                   {"type":"torch","on":true}
                                 {"type":"facing","mode":"environment"}
+                                {"type":"zoom","level":2}
                                 {"type":"pause","on":false}
 ```
 
@@ -121,6 +124,8 @@ POST /control                   {"type":"torch","on":true}
 
 - Live viewfinder filling the screen, with framing marks that flare when the agent grabs a frame
 - A tally light: red and breathing when streaming, dim when paused
+- Pinch to zoom, double-tap for 1x. Zoom is a centre crop of the main lens, so what you see
+  is exactly what the agent gets.
 - Torch, camera flip, pause. Pause stops new frames from leaving the phone.
 - A wake lock, so the screen does not blank mid-session
 

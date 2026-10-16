@@ -16,6 +16,12 @@
   height: 100%;
   object-fit: cover;
   background: var(--canvas-deep);
+  /* Our pinch owns two-finger gestures; the browser must not steal them. */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  transform-origin: center center;
+  will-change: transform;
 }
 
 /* Viewfinder corner marks: the signature. They breathe with the stream. */
@@ -165,6 +171,31 @@
 
 .hint.is-alert {
   color: var(--tally);
+}
+
+/* ---- zoom pill ------------------------------------------------------------- */
+.zoom-pill {
+  position: absolute;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom) + 128px);
+  z-index: 4;
+  padding: 12px 22px;
+  border-radius: var(--r-control);
+  background: oklch(0.1 0.006 265 / 0.82);
+  color: var(--ink);
+  font-size: 22px;
+  font-weight: 560;
+  letter-spacing: -0.025em;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, 8px) scale(0.94);
+  transition: opacity var(--snap), transform var(--snap);
+}
+
+.zoom-pill.is-shown {
+  opacity: 1;
+  transform: translate(-50%, 0) scale(1);
 }
 
 /* ---- controls ------------------------------------------------------------- */

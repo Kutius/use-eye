@@ -8,7 +8,13 @@ type ServerMsg =
   | { t: "torch"; id: string; on: boolean }
   | { t: "facing"; id: string; mode: Facing }
   | { t: "params"; params: { pushMs: number; quality: number; maxW: number } }
-  | { t: "pause"; id: string; on: boolean };
+  | { t: "pause"; id: string; on: boolean }
+  | { t: "zoom"; id: string; level: number };
+
+type TorchTrack = MediaStreamTrack & {
+  getCapabilities?: () => MediaTrackCapabilities;
+  applyConstraints: (c: MediaTrackConstraints) => Promise<void>;
+};
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -36,6 +42,17 @@ let wsClosed = false;
 let pushTimer: number | null = null;
 let reconnectDelay = 600;
 let wakeLock: { release: () => Promise<void> } | null = null;
+
+/**
+ * Zoom is a crop of the widest sensor view, expressed as a multiplier.
+ * 1 = the whole frame the main lens sees. Digital crop is the source of
+ * truth so the viewfinder and the captured JPEG always match, on every
+ * device; hardware zoom is only used as a free extra on top.
+ */
+const ZOOM_MAX = 8;
+let zoomLevel = 1;
+/** What the track actually applied, as a multiplier. 1 = untouched. */
+let hwZoom = 1;
 
 const canvas = document.createElement("canvas");
 const ctx = canvas.getContext("2d", { willReadFrequently: false })!;
@@ -91,20 +108,7 @@ function updateReadout() {
   const w = video.videoWidth;
   const h = video.videoHeight;
   readDims.textContent = w && h ? `${w}×${h}` : "—";
-  let zoomNote = "";
-  const t = track();
-  try {
-    const z = (t?.getSettings() as { zoom?: number } | undefined)?.zoom;
-    const caps = t?.getCapabilities?.() as { zoom?: { min: number } } | undefined;
-    if (z != null && caps?.zoom) {
-      // Show the multiplier relative to the widest setting, so "1x" means
-      // the main wide camera and not a telephoto or a digital crop.
-      const mult = z / (caps.zoom.min || 1);
-      zoomNote = mult > 1.15 ? ` · ${mult.toFixed(1)}x` : "";
-    }
-  } catch {
-    /* zoom readout is decoration */
-  }
+  const zoomNote = zoomLevel > 1.05 ? ` · ${zoomLevel.toFixed(1)}x` : "";
   readFacing.textContent = (facing === "user" ? "front" : "rear") + zoomNote;
 }
 
@@ -165,10 +169,11 @@ async function pickDeviceId(want: Facing): Promise<string | null> {
 }
 
 /**
- * Push zoom to the widest setting. A telephoto or a leftover 2x digital zoom
- * is a terrible default for reading things at arm's length.
+ * Force the track to its widest optical setting. Everything past that is
+ * our own crop, so the main lens stays predictable and a leftover 2x
+ * digital zoom never hides behind the lens choice.
  */
-function settleZoom(t: TorchTrack) {
+function settleWidest(t: TorchTrack) {
   try {
     const caps = t.getCapabilities?.() as { zoom?: { min: number; max: number } } | undefined;
     if (!caps?.zoom) return;
@@ -179,6 +184,70 @@ function settleZoom(t: TorchTrack) {
   } catch {
     /* zoom is best-effort */
   }
+}
+
+/** How much of zoomLevel is left for us to crop digitally. */
+function digitalZoom(): number {
+  return Math.max(1, zoomLevel / hwZoom);
+}
+
+let zoomPillTimer = 0;
+
+function showZoomPill() {
+  const pill = $("zoom-pill");
+  const val = $("zoom-pill-val");
+  val.textContent = `${zoomLevel.toFixed(1)}x`;
+  pill.classList.add("is-shown");
+  window.clearTimeout(zoomPillTimer);
+  zoomPillTimer = window.setTimeout(() => pill.classList.remove("is-shown"), 1200);
+}
+
+/** Show exactly what grabFrame will capture: hardware zoom, then our crop. */
+function applyZoomView() {
+  const d = digitalZoom();
+  video.style.transform = d > 1.001 ? `scale(${d})` : "";
+  updateReadout();
+}
+
+/**
+ * Apply a zoom multiplier. Hardware is asked first when the track can do
+ * part of it; whatever is left is a centre crop, which is also what the
+ * viewfinder scales to. `live` skips the hardware call so a pinch stays
+ * smooth, and the gesture end commits it.
+ */
+async function setZoom(level: number, opts: { live?: boolean } = {}) {
+  const want = Math.min(Math.max(level, 1), ZOOM_MAX);
+  const t = track();
+
+  if (!opts.live && t) {
+    let hw = 1;
+    try {
+      const caps = t.getCapabilities?.() as { zoom?: { min: number; max: number } } | undefined;
+      if (caps?.zoom) {
+        const min = caps.zoom.min;
+        const target = Math.min(Math.max(min * want, caps.zoom.min), caps.zoom.max);
+        await t.applyConstraints({ advanced: [{ zoom: target } as MediaTrackConstraintSet] });
+        const got = (t.getSettings() as { zoom?: number }).zoom;
+        hw = got != null ? got / (min || 1) : 1;
+      }
+    } catch {
+      hw = 1;
+    }
+    hwZoom = Math.max(1, hw);
+  }
+
+  zoomLevel = want;
+  applyZoomView();
+  sendState();
+  showZoomPill();
+}
+
+/** Reset to 1x. Used on lens switch and by double-tap. */
+function resetZoom() {
+  zoomLevel = 1;
+  hwZoom = 1;
+  applyZoomView();
+  sendState();
 }
 
 /**
@@ -255,7 +324,10 @@ async function openMedia(want: Facing): Promise<MediaStream> {
         /* keep whatever we opened */
       }
     }
-    if (v) settleZoom(v);
+    if (v) {
+      settleWidest(v);
+      hwZoom = 1;
+    }
     return got;
   }
 
@@ -288,6 +360,9 @@ async function startCamera() {
   setMode();
 
   video.addEventListener("resize", updateReadout);
+  // A new track has a new zoom range, and settleWidest may still be racing.
+  // Re-sync the crop so the viewfinder keeps matching grabFrame.
+  applyZoomView();
 }
 
 function stopCamera() {
@@ -299,11 +374,6 @@ function stopCamera() {
   stream = null;
   video.srcObject = null;
 }
-
-type TorchTrack = MediaStreamTrack & {
-  getCapabilities?: () => MediaTrackCapabilities;
-  applyConstraints: (c: MediaTrackConstraints) => Promise<void>;
-};
 
 function track(): TorchTrack | null {
   return (stream?.getVideoTracks()[0] as TorchTrack | undefined) ?? null;
@@ -333,12 +403,19 @@ async function grabFrame(quality: number, maxW: number): Promise<Uint8Array | nu
   const vw = video.videoWidth;
   const vh = video.videoHeight;
   if (!vw || !vh) return null;
-  const scale = Math.min(1, maxW / vw);
-  const w = Math.round(vw * scale);
-  const h = Math.round(vh * scale);
+  // Centre crop by the digital portion of zoomLevel. Hardware zoom is
+  // already baked into the pixels; this covers the rest.
+  const d = digitalZoom();
+  const sw = Math.max(16, Math.round(vw / d));
+  const sh = Math.max(16, Math.round(vh / d));
+  const sx = Math.round((vw - sw) / 2);
+  const sy = Math.round((vh - sh) / 2);
+  const scale = Math.min(1, maxW / sw);
+  const w = Math.max(1, Math.round(sw * scale));
+  const h = Math.max(1, Math.round(sh * scale));
   canvas.width = w;
   canvas.height = h;
-  ctx.drawImage(video, 0, 0, w, h);
+  ctx.drawImage(video, sx, sy, sw, sh, 0, 0, w, h);
   const blob = await new Promise<Blob | null>((res) =>
     canvas.toBlob(res, "image/jpeg", Math.min(Math.max(quality, 0.3), 0.95)),
   );
@@ -370,6 +447,7 @@ function sendState() {
     paused,
     width: video.videoWidth,
     height: video.videoHeight,
+    zoom: Number(zoomLevel.toFixed(2)),
     cam: cameraErrorMsg || (stream ? "ok" : "starting"),
   });
 }
@@ -456,6 +534,7 @@ function connect() {
       case "facing":
         try {
           facing = msg.mode;
+          resetZoom();
           await startCamera();
           updateReadout();
           sendState();
@@ -469,6 +548,14 @@ function connect() {
         setMode();
         sendState();
         sendJson({ t: "ack", id: msg.id, ok: true });
+        break;
+      case "zoom":
+        try {
+          await setZoom(msg.level);
+          sendJson({ t: "ack", id: msg.id, ok: true, detail: `${zoomLevel.toFixed(1)}x` });
+        } catch (e) {
+          sendJson({ t: "ack", id: msg.id, ok: false, err: String(e) });
+        }
         break;
     }
   };
@@ -524,6 +611,7 @@ btnTorch.addEventListener("click", async () => {
 
 btnFlip.addEventListener("click", async () => {
   facing = facing === "environment" ? "user" : "environment";
+  resetZoom();
   try {
     await startCamera();
     btnTorch.disabled = !supportsTorch();
@@ -540,6 +628,70 @@ btnPause.addEventListener("click", () => {
   showHint(paused ? "Stream paused. The agent sees nothing new." : "Stream resumed.");
   window.setTimeout(hideHint, 1400);
   sendState();
+});
+
+// ---- zoom gestures ---------------------------------------------------------
+// Pinch on the viewfinder sets the crop live; the gesture end is what asks
+// the hardware to help. Double-tap puts it back to 1x. Both stay out of the
+// chrome so the viewfinder keeps the whole screen.
+
+const pinch = { active: false, startDist: 0, startZoom: 1 };
+
+function touchDist(t: TouchList): number {
+  const a = t[0];
+  const b = t[1];
+  if (!a || !b) return 0;
+  return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+}
+
+video.addEventListener(
+  "touchstart",
+  (e) => {
+    if (e.touches.length !== 2) return;
+    pinch.active = true;
+    pinch.startDist = touchDist(e.touches);
+    pinch.startZoom = zoomLevel;
+  },
+  { passive: true },
+);
+
+video.addEventListener(
+  "touchmove",
+  (e) => {
+    if (!pinch.active || e.touches.length !== 2) return;
+    const d = touchDist(e.touches);
+    if (pinch.startDist > 0 && d > 0) {
+      void setZoom(pinch.startZoom * (d / pinch.startDist), { live: true });
+    }
+  },
+  { passive: true },
+);
+
+const endPinch = () => {
+  if (!pinch.active) return;
+  pinch.active = false;
+  // Commit: let the track take as much of the zoom as it can.
+  void setZoom(zoomLevel);
+};
+video.addEventListener("touchend", endPinch, { passive: true });
+video.addEventListener("touchcancel", endPinch, { passive: true });
+
+let lastTapAt = 0;
+stage.addEventListener("pointerup", (e) => {
+  if ((e.target as HTMLElement).closest("button, .sheet")) return;
+  if (e.pointerType === "mouse" && e.detail > 1) return; // let dblclick handle desktop
+  const now = Date.now();
+  if (now - lastTapAt < 320) {
+    lastTapAt = 0;
+    void setZoom(1);
+  } else {
+    lastTapAt = now;
+  }
+});
+
+stage.addEventListener("dblclick", (e) => {
+  if ((e.target as HTMLElement).closest("button, .sheet")) return;
+  void setZoom(1);
 });
 
 sheetClose.addEventListener("click", () => {
@@ -570,6 +722,7 @@ void (async () => {
     const rearErr = errName(e);
     try {
       facing = facing === "environment" ? "user" : "environment";
+      resetZoom();
       await startCamera();
       showHint(`${facing === "user" ? "Rear" : "Front"} camera failed (${rearErr}). Using the other one.`, true);
       window.setTimeout(hideHint, 4000);
@@ -584,6 +737,6 @@ void (async () => {
   }
   btnTorch.disabled = !supportsTorch();
   await requestWakeLock();
-  showHint("Point at what the agent should see.");
-  window.setTimeout(hideHint, 2600);
+  showHint("Pinch to zoom · double-tap for 1x");
+  window.setTimeout(hideHint, 3200);
 })();

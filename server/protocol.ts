@@ -28,7 +28,16 @@ export const DEFAULT_STREAM: StreamParams = {
 /** phone -> server, text frames */
 export type PhoneMsg =
   | { t: "hello"; v: 1; caps: PhoneCaps }
-  | { t: "state"; facing: Facing; torch: boolean; paused: boolean; width: number; height: number; cam?: string }
+  | {
+      t: "state";
+      facing: Facing;
+      torch: boolean;
+      paused: boolean;
+      width: number;
+      height: number;
+      zoom: number;
+      cam?: string;
+    }
   | { t: "ack"; id: string; ok: true; detail?: string }
   | { t: "ack"; id: string; ok: false; err: string }
   | { t: "bye" };
@@ -40,7 +49,9 @@ export type ServerMsg =
   | { t: "torch"; id: string; on: boolean }
   | { t: "facing"; id: string; mode: Facing }
   | { t: "params"; params: StreamParams }
-  | { t: "pause"; id: string; on: boolean };
+  | { t: "pause"; id: string; on: boolean }
+  /** level is a multiplier, 1 = widest. Clamped on the phone. */
+  | { t: "zoom"; id: string; level: number };
 
 /** Binary frames from the phone are raw JPEG bytes. */
 export type FrameMeta = {
@@ -55,4 +66,5 @@ export type ControlRequest =
   | { type: "torch"; on: boolean }
   | { type: "facing"; mode: Facing }
   | { type: "pause"; on: boolean }
-  | { type: "params"; params: Partial<StreamParams> };
+  | { type: "params"; params: Partial<StreamParams> }
+  | { type: "zoom"; level: number };
