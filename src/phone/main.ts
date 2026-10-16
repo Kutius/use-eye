@@ -214,11 +214,19 @@ function applyZoomView() {
  * part of it; whatever is left is a centre crop, which is also what the
  * viewfinder scales to. `live` skips the hardware call so a pinch stays
  * smooth, and the gesture end commits it.
+ *
+ * The level is taken before any await. Two calls racing each other must
+ * resolve to the one the user asked for last, not the one whose
+ * applyConstraints happened to return first.
  */
+let zoomSeq = 0;
+
 async function setZoom(level: number, opts: { live?: boolean } = {}) {
   const want = Math.min(Math.max(level, 1), ZOOM_MAX);
-  const t = track();
+  const seq = ++zoomSeq;
+  zoomLevel = want;
 
+  const t = track();
   if (!opts.live && t) {
     let hw = 1;
     try {
@@ -233,10 +241,13 @@ async function setZoom(level: number, opts: { live?: boolean } = {}) {
     } catch {
       hw = 1;
     }
+    // A newer request already owns the view. Leave the hardware to it.
+    if (seq !== zoomSeq) return;
     hwZoom = Math.max(1, hw);
+  } else if (seq !== zoomSeq) {
+    return;
   }
 
-  zoomLevel = want;
   applyZoomView();
   sendState();
   showZoomPill();
@@ -244,6 +255,7 @@ async function setZoom(level: number, opts: { live?: boolean } = {}) {
 
 /** Reset to 1x. Used on lens switch and by double-tap. */
 function resetZoom() {
+  zoomSeq++;
   zoomLevel = 1;
   hwZoom = 1;
   applyZoomView();
@@ -634,14 +646,24 @@ btnPause.addEventListener("click", () => {
 // Pinch on the viewfinder sets the crop live; the gesture end is what asks
 // the hardware to help. Double-tap puts it back to 1x. Both stay out of the
 // chrome so the viewfinder keeps the whole screen.
+//
+// Two fingers lifting from a pinch fire two pointerups a few milliseconds
+// apart. That must never be read as a double-tap, or every pinch snaps back
+// to 1x on release.
 
 const pinch = { active: false, startDist: 0, startZoom: 1 };
+let pinchEndedAt = 0;
+let lastTapAt = 0;
 
 function touchDist(t: TouchList): number {
   const a = t[0];
   const b = t[1];
   if (!a || !b) return 0;
   return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+}
+
+function isUiTarget(e: Event): boolean {
+  return !!(e.target as HTMLElement).closest("button, .sheet");
 }
 
 video.addEventListener(
@@ -651,6 +673,15 @@ video.addEventListener(
     pinch.active = true;
     pinch.startDist = touchDist(e.touches);
     pinch.startZoom = zoomLevel;
+    // A pinch is not a tap, even if one finger later lands near another.
+    lastTapAt = 0;
+    // Take hardware zoom out of the picture for the gesture so the crop
+    // ratio stays honest even when pinching back below the current level.
+    // The commit at the end puts the hardware back to work.
+    const t = track();
+    if (t) settleWidest(t);
+    hwZoom = 1;
+    applyZoomView();
   },
   { passive: true },
 );
@@ -670,17 +701,22 @@ video.addEventListener(
 const endPinch = () => {
   if (!pinch.active) return;
   pinch.active = false;
+  pinchEndedAt = Date.now();
+  lastTapAt = 0;
   // Commit: let the track take as much of the zoom as it can.
   void setZoom(zoomLevel);
 };
 video.addEventListener("touchend", endPinch, { passive: true });
 video.addEventListener("touchcancel", endPinch, { passive: true });
 
-let lastTapAt = 0;
 stage.addEventListener("pointerup", (e) => {
-  if ((e.target as HTMLElement).closest("button, .sheet")) return;
+  if (isUiTarget(e)) return;
   if (e.pointerType === "mouse" && e.detail > 1) return; // let dblclick handle desktop
+  // Only a single, primary finger counts as a tap. The second finger of a
+  // pinch is not primary, and neither finger is a tap just after a pinch.
+  if (e.pointerType === "touch" && !e.isPrimary) return;
   const now = Date.now();
+  if (now - pinchEndedAt < 500) return;
   if (now - lastTapAt < 320) {
     lastTapAt = 0;
     void setZoom(1);
@@ -690,7 +726,8 @@ stage.addEventListener("pointerup", (e) => {
 });
 
 stage.addEventListener("dblclick", (e) => {
-  if ((e.target as HTMLElement).closest("button, .sheet")) return;
+  if (isUiTarget(e)) return;
+  if (Date.now() - pinchEndedAt < 500) return;
   void setZoom(1);
 });
 
