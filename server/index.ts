@@ -1,8 +1,8 @@
-import { readFile, stat } from "node:fs/promises";
+import { readFile, rm, stat } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import QRCode from "qrcode";
-import { eye, LATEST_JPG } from "./state.ts";
+import { eye, LATEST_JPG, STATE_DIR } from "./state.ts";
 import { openTunnel, lanAddresses } from "./tunnel.ts";
 import { loadOrCreateCert } from "./cert.ts";
 import type { ServerMsg } from "./protocol.ts";
@@ -13,6 +13,8 @@ const AGENT_PORT = Number(process.env.USE_EYE_AGENT_PORT ?? 8788);
 const DIST = join(import.meta.dirname, "..", "dist");
 const TOKEN = process.env.USE_EYE_TOKEN ?? randomBytes(9).toString("base64url");
 const PHONE_PATH = `/c/${TOKEN}`;
+/** Minutes with no phone attached before the bridge stops itself. 0 = never. */
+const IDLE_MINUTES = Math.max(0, Number(process.env.USE_EYE_IDLE_MINUTES ?? 10));
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -254,15 +256,32 @@ async function main() {
     .then((q) => process.stdout.write(q + "\n"))
     .catch(() => {});
 
-  const shutdown = () => {
+  const shutdown = (reason?: string) => {
     tunnel.stop?.();
     phoneServer.stop();
     upstreamServer.stop();
     agentServer.stop();
+    if (reason) process.stderr.write(`use-eye: ${reason}\n`);
+    // Best-effort: a stale pid file is harmless, a clean one is tidier.
+    void rm(join(STATE_DIR, "bridge.pid"), { force: true });
+    void rm(join(STATE_DIR, "bridge.json"), { force: true });
     process.exit(0);
   };
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", () => shutdown());
+  process.on("SIGTERM", () => shutdown());
+
+  // Watchdog: a bridge nobody is pointing a phone at should not live forever.
+  // The clock starts at boot and on every disconnect; attaching a phone stops it.
+  if (IDLE_MINUTES > 0) {
+    const limitMs = IDLE_MINUTES * 60_000;
+    const tick = setInterval(() => {
+      if (eye.idleForMs >= limitMs) {
+        clearInterval(tick);
+        shutdown(`no phone for ${IDLE_MINUTES} min, stopping`);
+      }
+    }, 15_000);
+    tick.unref?.();
+  }
 }
 
 void phoneServer;

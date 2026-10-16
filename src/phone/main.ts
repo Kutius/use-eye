@@ -42,6 +42,26 @@ let wsClosed = false;
 let pushTimer: number | null = null;
 let reconnectDelay = 600;
 let wakeLock: { release: () => Promise<void> } | null = null;
+/**
+ * The camera is only hot while someone is using it. Sleeping means the page
+ * went to the background and we released the sensor; quiet means the agent
+ * has not asked for a frame lately, so the push loop backs off.
+ */
+let sleeping = false;
+let lastAgentAsk = 0;
+let lastPushAt = 0;
+let releaseTimer = 0;
+let recovering = false;
+
+/** Full rate while the agent is looking, a trickle otherwise. */
+const QUIET_PUSH_MS = 4000;
+const QUIET_AFTER_MS = 45_000;
+/** How long the page can sit in the background before the sensor is released. */
+const SLEEP_AFTER_MS = 30_000;
+
+function pushGapMs(): number {
+  return Date.now() - lastAgentAsk > QUIET_AFTER_MS ? Math.max(params.pushMs, QUIET_PUSH_MS) : params.pushMs;
+}
 
 /**
  * Zoom is a centre crop of the widest sensor view, expressed as a multiplier.
@@ -79,6 +99,10 @@ let cameraErrorMsg = "";
 function updateTally() {
   if (stage.classList.contains("is-error")) {
     tallyLabel.textContent = cameraErrorMsg ? "denied" : "blocked";
+    return;
+  }
+  if (sleeping) {
+    tallyLabel.textContent = "sleep";
     return;
   }
   if (!stream) {
@@ -309,6 +333,24 @@ async function startCamera() {
   updateTally();
   stream = await openMedia(facing);
   video.srcObject = stream;
+  // Another app can kill the track (a call, a QR scanner). Recover instead
+  // of leaving a black viewfinder and a tally stuck on "live". We clear
+  // onended in stopCamera so our own teardown never loops back into this.
+  for (const t of stream.getVideoTracks()) {
+    t.onended = () => {
+      if (sleeping || recovering) return;
+      if (stream?.getVideoTracks()[0] !== t) return;
+      recovering = true;
+      showHint("Camera was taken by another app. Recovering…");
+      window.setTimeout(() => {
+        void startCamera()
+          .catch((e) => showHint(`Camera lost (${errName(e)}). Reload the page.`, true))
+          .finally(() => {
+            recovering = false;
+          });
+      }, 400);
+    };
+  }
   // play() can sit pending forever on some mobile browsers. Never let it block
   // the rest of the boot: the stream is already attached and frames can be
   // grabbed from the element even if the promise has not settled.
@@ -328,6 +370,7 @@ async function startCamera() {
   updateReadout();
   hideHint();
   setMode();
+  startPushLoop();
 
   video.addEventListener("resize", updateReadout);
   // Keep the crop in sync after a camera switch.
@@ -339,7 +382,10 @@ function stopCamera() {
     clearInterval(pushTimer);
     pushTimer = null;
   }
-  stream?.getTracks().forEach((t) => t.stop());
+  stream?.getTracks().forEach((t) => {
+    t.onended = null;
+    t.stop();
+  });
   stream = null;
   video.srcObject = null;
 }
@@ -416,7 +462,7 @@ function sendState() {
     width: video.videoWidth,
     height: video.videoHeight,
     zoom: Number(zoomLevel.toFixed(2)),
-    cam: cameraErrorMsg || (stream ? "ok" : "starting"),
+    cam: cameraErrorMsg || (sleeping ? "sleep" : stream ? "ok" : "starting"),
   });
 }
 
@@ -429,11 +475,16 @@ function sendFrame(bytes: Uint8Array) {
 
 function startPushLoop() {
   if (pushTimer !== null) clearInterval(pushTimer);
+  // Tick often, push on time. The gap widens when the agent goes quiet so a
+  // phone left open is not encoding a JPEG every second at nobody.
   pushTimer = window.setInterval(async () => {
-    if (paused || ws?.readyState !== WebSocket.OPEN) return;
+    if (paused || sleeping || ws?.readyState !== WebSocket.OPEN) return;
+    const gap = pushGapMs();
+    if (Date.now() - lastPushAt < gap) return;
+    lastPushAt = Date.now();
     const bytes = await grabFrame(params.quality, params.maxW);
     if (bytes) sendFrame(bytes);
-  }, Math.max(params.pushMs, 250));
+  }, 250);
 }
 
 function connect() {
@@ -445,6 +496,7 @@ function connect() {
 
   ws.onopen = () => {
     reconnectDelay = 600;
+    lastAgentAsk = Date.now();
     sendJson({
       t: "hello",
       v: 1,
@@ -482,6 +534,7 @@ function connect() {
         startPushLoop();
         break;
       case "capture": {
+        lastAgentAsk = Date.now();
         const bytes = await grabFrame(msg.quality, msg.maxW);
         if (bytes) {
           sendFrame(bytes);
@@ -682,8 +735,38 @@ sheetClose.addEventListener("click", () => {
 
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") {
+    sleeping = false;
+    window.clearTimeout(releaseTimer);
     void requestWakeLock();
     if (ws?.readyState !== WebSocket.OPEN && !wsClosed) connect();
+    // Camera may have been released while we were away.
+    if (!stream && !stage.classList.contains("is-error")) {
+      void startCamera().catch((e) => {
+        stage.classList.add("is-error");
+        cameraErrorMsg = errName(e);
+        updateTally();
+        showHint(`No camera responded (${cameraErrorMsg}). Reload the page.`, true);
+      });
+    } else {
+      startPushLoop();
+    }
+    updateTally();
+    setMode();
+  } else {
+    // Stop pushing at once. Give the user a moment to flip back before
+    // letting go of the sensor, so other apps can use it and the battery
+    // does not burn in a pocket.
+    if (pushTimer !== null) {
+      clearInterval(pushTimer);
+      pushTimer = null;
+    }
+    releaseTimer = window.setTimeout(() => {
+      if (document.visibilityState !== "hidden") return;
+      sleeping = true;
+      stopCamera();
+      updateTally();
+      sendState();
+    }, SLEEP_AFTER_MS);
   }
 });
 

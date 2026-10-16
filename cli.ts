@@ -32,10 +32,13 @@ const META_FILE = join(STATE_DIR, "bridge.json");
 const usage = `use-eye — let an AI agent see through your phone camera
 
   use-eye start [--timeout 120] [--no-wait] [--foreground] [--json]
+                 [--idle-timeout 10]
                  Start the bridge in the background, print the phone URL,
                  then wait until a phone is connected and return.
                  --no-wait    return as soon as the bridge is up
                  --foreground keep the bridge in this terminal (Ctrl-C to stop)
+                 --idle-timeout  minutes with no phone before the bridge
+                                 stops itself (default 10, 0 = never)
   use-eye stop                 stop the background bridge
   use-eye restart              stop + start
   use-eye status               bridge state as JSON
@@ -213,6 +216,11 @@ function killPid(pid: number) {
 /** Spawn bun without a shell so argv is not re-parsed (avoids DEP0190). */
 const BUN = process.platform === "win32" ? "bun.exe" : "bun";
 
+/** Bridge env: inherit everything, override the idle watchdog when asked. */
+function bridgeEnv(idleMinutes: number): NodeJS.ProcessEnv {
+  return { ...process.env, USE_EYE_IDLE_MINUTES: String(idleMinutes) };
+}
+
 async function stopBridge(): Promise<"stopped" | "not-running"> {
   const pid = readPid();
   const up = await bridgeUp();
@@ -247,7 +255,10 @@ async function stopBridge(): Promise<"stopped" | "not-running"> {
 }
 
 /** Ensure a background bridge is listening. Returns the status snapshot. */
-async function ensureBridge(root: string | null): Promise<{ st: Record<string, unknown>; alreadyRunning: boolean; pid: number | null }> {
+async function ensureBridge(
+  root: string | null,
+  idleMinutes: number,
+): Promise<{ st: Record<string, unknown>; alreadyRunning: boolean; pid: number | null }> {
   const existing = await readStatus();
   if (existing) {
     return { st: existing, alreadyRunning: true, pid: readPid() };
@@ -270,6 +281,7 @@ async function ensureBridge(root: string | null): Promise<{ st: Record<string, u
     detached: true,
     stdio: ["ignore", logFd, logFd],
     windowsHide: true,
+    env: bridgeEnv(idleMinutes),
   });
   closeSync(logFd);
   if (!child.pid) die(`failed to spawn the bridge; see ${LOG_FILE}`);
@@ -279,7 +291,18 @@ async function ensureBridge(root: string | null): Promise<{ st: Record<string, u
   const st = await waitForBridge(15000);
   writeFileSync(
     META_FILE,
-    JSON.stringify({ pid: child.pid, agent: AGENT, phoneUrl: st.phoneUrl, startedAt: Date.now(), log: LOG_FILE }, null, 2),
+    JSON.stringify(
+      {
+        pid: child.pid,
+        agent: AGENT,
+        phoneUrl: st.phoneUrl,
+        startedAt: Date.now(),
+        idleTimeoutMin: idleMinutes,
+        log: LOG_FILE,
+      },
+      null,
+      2,
+    ),
   );
   return { st, alreadyRunning: false, pid: child.pid };
 }
@@ -300,6 +323,9 @@ switch (cmd) {
     const noWait = flag(rest, "--no-wait");
     const foreground = flag(rest, "--foreground") || flag(rest, "-f");
     const timeoutMs = Math.max(5, Number(opt(rest, "--timeout") ?? 120)) * 1000;
+    const idleRaw = opt(rest, "--idle-timeout");
+    const idleMinutes = idleRaw === undefined ? 10 : Math.max(0, Number(idleRaw));
+    if (!Number.isFinite(idleMinutes)) die("usage: use-eye start --idle-timeout <minutes>");
     const root = packageRoot();
 
     if (foreground) {
@@ -316,12 +342,13 @@ switch (cmd) {
       const child = spawn(BUN, ["server/index.ts"], {
         cwd: root,
         stdio: "inherit",
+        env: bridgeEnv(idleMinutes),
       });
       child.on("exit", (code) => process.exit(code ?? 0));
       break;
     }
 
-    const { st, alreadyRunning, pid } = await ensureBridge(root);
+    const { st, alreadyRunning, pid } = await ensureBridge(root, idleMinutes);
     const phoneUrl = String(st.phoneUrl ?? "?");
 
     if (json && noWait) {

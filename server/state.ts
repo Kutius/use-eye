@@ -39,6 +39,8 @@ class EyeState {
   params: StreamParams = { ...DEFAULT_STREAM };
   connectedAt: number | null = null;
   lastMsgAt: number | null = null;
+  /** When the phone last went away. Starts at boot so a bridge nobody opens also ages out. */
+  idleSince = Date.now();
   phoneSend: ((msg: ServerMsg) => void) | null = null;
   phoneSendBinary: ((bytes: Uint8Array) => void) | null = null;
 
@@ -51,6 +53,11 @@ class EyeState {
     return this.phoneSend !== null;
   }
 
+  /** How long no phone has been attached. 0 while one is connected. */
+  get idleForMs(): number {
+    return this.phoneConnected ? 0 : Date.now() - this.idleSince;
+  }
+
   nextId(): string {
     return `c${++this.idCounter}`;
   }
@@ -59,6 +66,7 @@ class EyeState {
     this.phoneSend = send;
     this.connectedAt = Date.now();
     this.lastMsgAt = this.connectedAt;
+    this.idleSince = this.connectedAt;
     send({ t: "welcome", params: this.params });
     this.onGone = onGone;
   }
@@ -68,6 +76,7 @@ class EyeState {
   detachPhone() {
     this.phoneSend = null;
     this.connectedAt = null;
+    this.idleSince = Date.now();
     for (const w of this.captureWaiters) {
       clearTimeout(w.timer);
       w.resolve(null);
@@ -178,6 +187,7 @@ class EyeState {
       phoneConnected: this.phoneConnected,
       phoneConnectedForMs: this.connectedAt ? now - this.connectedAt : null,
       lastMsgAgeMs: this.lastMsgAt ? now - this.lastMsgAt : null,
+      idleForMs: this.idleForMs,
       caps: this.caps,
       facing: this.facing,
       torch: this.torch,

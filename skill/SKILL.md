@@ -22,12 +22,17 @@ Flags worth knowing:
 
 - `--no-wait` return as soon as the bridge is up, without waiting for the phone
 - `--timeout 120` how long to wait for the phone (seconds, default 120)
+- `--idle-timeout 10` minutes with no phone before the bridge stops itself
+  (default 10, `0` to keep it up forever)
 - `--json` machine-readable output
 - `--foreground` keep the bridge in this terminal (do not use this; it never returns)
 
 If `use-eye start` prints `already running`, a bridge is already up and it is now waiting for
 the phone. If it times out, the URL is printed again. Tell the user to open it, allow the
 camera, then run `use-eye wait`.
+
+A bridge with no phone attached stops itself after `--idle-timeout` minutes. If a later
+command says `bridge not reachable`, that is what happened: run `use-eye start` again.
 
 ## Look at something
 
@@ -90,9 +95,9 @@ it down. Leaving it running is fine if more looks are coming.
 
 | What you see | What it means | What to do |
 |---|---|---|
-| `bridge not reachable` | bridge is not running | `use-eye start` |
+| `bridge not reachable` | bridge is not running, or it idled out | `use-eye start` |
 | `no phone connected within Ns` | nobody opened the URL yet | repeat the URL to the user, then `use-eye wait` |
-| `no fresh frame arrived in time` | stream paused, screen locked, camera denied | `use-eye pause off`, ask them to unlock and re-allow |
+| `no fresh frame arrived in time` | stream paused, page backgrounded, screen locked, camera denied | `use-eye pause off`, ask them to bring the page back and re-allow |
 | `bridge ... does not own it` on stop | someone else started the bridge | ask them to stop it in that terminal |
 | image is black | lens covered, or dark scene | `use-eye torch on`, check the lens |
 | image is the wrong side | front camera | `use-eye facing environment` |

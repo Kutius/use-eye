@@ -44,7 +44,10 @@ phone to connect, then hands the shell back with the bridge still running in the
 
 ```
 use-eye start [--timeout 120] [--no-wait] [--foreground] [--json]
+               [--idle-timeout 10]
                start the bridge, print the phone URL, wait for a phone, return
+               --idle-timeout  minutes with no phone before the bridge stops
+                               itself (default 10, 0 = never)
 use-eye stop                 stop the background bridge
 use-eye restart              stop + start
 use-eye status               bridge state as JSON
@@ -127,6 +130,8 @@ POST /control                   {"type":"torch","on":true}
 - Pinch to zoom, double-tap for 1x. Zoom is a centre crop of the main lens, so what you see
   is exactly what the agent gets.
 - Torch, camera flip, pause. Pause stops new frames from leaving the phone.
+- The camera goes to sleep when the page is backgrounded for 30s, and frame pushes back
+  off when the agent has not asked for one in a while.
 - A wake lock, so the screen does not blank mid-session
 
 ## Development
