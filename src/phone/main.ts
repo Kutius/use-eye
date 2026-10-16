@@ -91,7 +91,21 @@ function updateReadout() {
   const w = video.videoWidth;
   const h = video.videoHeight;
   readDims.textContent = w && h ? `${w}×${h}` : "—";
-  readFacing.textContent = facing === "user" ? "front" : "rear";
+  let zoomNote = "";
+  const t = track();
+  try {
+    const z = (t?.getSettings() as { zoom?: number } | undefined)?.zoom;
+    const caps = t?.getCapabilities?.() as { zoom?: { min: number } } | undefined;
+    if (z != null && caps?.zoom) {
+      // Show the multiplier relative to the widest setting, so "1x" means
+      // the main wide camera and not a telephoto or a digital crop.
+      const mult = z / (caps.zoom.min || 1);
+      zoomNote = mult > 1.15 ? ` · ${mult.toFixed(1)}x` : "";
+    }
+  } catch {
+    /* zoom readout is decoration */
+  }
+  readFacing.textContent = (facing === "user" ? "front" : "rear") + zoomNote;
 }
 
 async function requestWakeLock() {
@@ -117,6 +131,57 @@ function stopStream(s: MediaStream | null) {
 }
 
 /**
+ * Android phones expose the ultrawide and the telephoto as separate video
+ * inputs. `facingMode: "environment"` happily matches any of them, and on a
+ * lot of handsets that lands on the 2x, which cannot focus on anything
+ * close. Rank the candidates and prefer the main wide camera.
+ */
+async function pickDeviceId(want: Facing): Promise<string | null> {
+  let cams: MediaDeviceInfo[] = [];
+  try {
+    cams = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === "videoinput");
+  } catch {
+    return null;
+  }
+  if (!cams.length) return null;
+
+  const isFront = (d: MediaDeviceInfo) => /front|user|facetime/i.test(d.label);
+  const isAux = (d: MediaDeviceInfo) =>
+    /ultra|tele|macro|periscope|0\.5|2x|3x|5x|10x|wide\s*angle/i.test(d.label);
+
+  const pool = want === "user" ? cams.filter(isFront) : cams.filter((d) => !isFront(d));
+  if (!pool.length) return null;
+  if (want === "user") return pool[0].deviceId;
+
+  // Main rear first: not an aux lens, then the lowest camera index
+  // ("camera2 0, facing back" is the primary on Camera2 devices).
+  const camIndex = (d: MediaDeviceInfo) => {
+    const m = d.label.match(/camera(?:2)?\s*(\d+)/i);
+    return m ? Number(m[1]) : 99;
+  };
+  const rank = (d: MediaDeviceInfo) => (isAux(d) ? 1 : 0) * 1000 + camIndex(d);
+  pool.sort((a, b) => rank(a) - rank(b));
+  return pool[0].deviceId;
+}
+
+/**
+ * Push zoom to the widest setting. A telephoto or a leftover 2x digital zoom
+ * is a terrible default for reading things at arm's length.
+ */
+function settleZoom(t: TorchTrack) {
+  try {
+    const caps = t.getCapabilities?.() as { zoom?: { min: number; max: number } } | undefined;
+    if (!caps?.zoom) return;
+    const min = caps.zoom.min;
+    const cur = (t.getSettings() as { zoom?: number }).zoom;
+    if (cur != null && cur <= min + 0.01) return;
+    void t.applyConstraints({ advanced: [{ zoom: min } as MediaTrackConstraintSet] }).catch(() => {});
+  } catch {
+    /* zoom is best-effort */
+  }
+}
+
+/**
  * Open the camera without ever leaving a request hanging.
  *
  * getUserMedia can sit forever when another app holds the camera. Abandoning
@@ -130,7 +195,11 @@ async function openMedia(want: Facing): Promise<MediaStream> {
   // Minimal constraints first. The 1920x1080 wish is what wedges some Android
   // HALs, so it is applied afterwards as a best-effort upgrade, never as a
   // condition of opening the camera.
+  const deviceId = await pickDeviceId(want);
   const attempts: Array<{ c: MediaStreamConstraints; ms: number; label: string }> = [
+    ...(deviceId
+      ? [{ label: "device", ms: 5000, c: { audio: false, video: { deviceId: { exact: deviceId } } } }]
+      : []),
     { label: "facing-ideal", ms: 5000, c: { audio: false, video: { facingMode: { ideal: want } } } },
     { label: "facing-exact", ms: 5000, c: { audio: false, video: { facingMode: { exact: want } } } },
     { label: "no-res", ms: 5000, c: { audio: false, video: { facingMode: want } } },
@@ -175,7 +244,7 @@ async function openMedia(want: Facing): Promise<MediaStream> {
     }
 
     // Best-effort resolution upgrade. Failure is fine: the stream is usable.
-    const v = got.getVideoTracks()[0] as MediaStreamTrack | undefined;
+    const v = got.getVideoTracks()[0] as TorchTrack | undefined;
     if (v?.applyConstraints) {
       try {
         await Promise.race([
@@ -186,6 +255,7 @@ async function openMedia(want: Facing): Promise<MediaStream> {
         /* keep whatever we opened */
       }
     }
+    if (v) settleZoom(v);
     return got;
   }
 
