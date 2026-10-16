@@ -44,15 +44,17 @@ let reconnectDelay = 600;
 let wakeLock: { release: () => Promise<void> } | null = null;
 
 /**
- * Zoom is a crop of the widest sensor view, expressed as a multiplier.
- * 1 = the whole frame the main lens sees. Digital crop is the source of
- * truth so the viewfinder and the captured JPEG always match, on every
- * device; hardware zoom is only used as a free extra on top.
+ * Zoom is a centre crop of the widest sensor view, expressed as a multiplier.
+ * 1 = the whole frame the main lens sees.
+ *
+ * It is purely digital on purpose. The viewfinder scales and grabFrame
+ * crops by the same ratio, so what you see is always what the agent gets,
+ * and there is no hardware/soft zoom handoff to flash through on release.
+ * settleWidest only runs when a camera opens, to clear any zoom the system
+ * left behind.
  */
 const ZOOM_MAX = 8;
 let zoomLevel = 1;
-/** What the track actually applied, as a multiplier. 1 = untouched. */
-let hwZoom = 1;
 
 const canvas = document.createElement("canvas");
 const ctx = canvas.getContext("2d", { willReadFrequently: false })!;
@@ -169,9 +171,9 @@ async function pickDeviceId(want: Facing): Promise<string | null> {
 }
 
 /**
- * Force the track to its widest optical setting. Everything past that is
- * our own crop, so the main lens stays predictable and a leftover 2x
- * digital zoom never hides behind the lens choice.
+ * Force the track to its widest optical setting when a camera opens. Zoom
+ * itself is our own crop, so a leftover 2x from the system camera app must
+ * not hide under it.
  */
 function settleWidest(t: TorchTrack) {
   try {
@@ -186,11 +188,6 @@ function settleWidest(t: TorchTrack) {
   }
 }
 
-/** How much of zoomLevel is left for us to crop digitally. */
-function digitalZoom(): number {
-  return Math.max(1, zoomLevel / hwZoom);
-}
-
 let zoomPillTimer = 0;
 
 function showZoomPill() {
@@ -202,52 +199,18 @@ function showZoomPill() {
   zoomPillTimer = window.setTimeout(() => pill.classList.remove("is-shown"), 1200);
 }
 
-/** Show exactly what grabFrame will capture: hardware zoom, then our crop. */
+/** Show exactly what grabFrame will capture. */
 function applyZoomView() {
-  const d = digitalZoom();
-  video.style.transform = d > 1.001 ? `scale(${d})` : "";
+  video.style.transform = zoomLevel > 1.001 ? `scale(${zoomLevel})` : "";
   updateReadout();
 }
 
 /**
- * Apply a zoom multiplier. Hardware is asked first when the track can do
- * part of it; whatever is left is a centre crop, which is also what the
- * viewfinder scales to. `live` skips the hardware call so a pinch stays
- * smooth, and the gesture end commits it.
- *
- * The level is taken before any await. Two calls racing each other must
- * resolve to the one the user asked for last, not the one whose
- * applyConstraints happened to return first.
+ * Apply a zoom multiplier. Synchronous and free of camera I/O: the level is
+ * the crop, the view is the crop, and nothing waits on the track.
  */
-let zoomSeq = 0;
-
-async function setZoom(level: number, opts: { live?: boolean } = {}) {
-  const want = Math.min(Math.max(level, 1), ZOOM_MAX);
-  const seq = ++zoomSeq;
-  zoomLevel = want;
-
-  const t = track();
-  if (!opts.live && t) {
-    let hw = 1;
-    try {
-      const caps = t.getCapabilities?.() as { zoom?: { min: number; max: number } } | undefined;
-      if (caps?.zoom) {
-        const min = caps.zoom.min;
-        const target = Math.min(Math.max(min * want, caps.zoom.min), caps.zoom.max);
-        await t.applyConstraints({ advanced: [{ zoom: target } as MediaTrackConstraintSet] });
-        const got = (t.getSettings() as { zoom?: number }).zoom;
-        hw = got != null ? got / (min || 1) : 1;
-      }
-    } catch {
-      hw = 1;
-    }
-    // A newer request already owns the view. Leave the hardware to it.
-    if (seq !== zoomSeq) return;
-    hwZoom = Math.max(1, hw);
-  } else if (seq !== zoomSeq) {
-    return;
-  }
-
+function setZoom(level: number) {
+  zoomLevel = Math.min(Math.max(level, 1), ZOOM_MAX);
   applyZoomView();
   sendState();
   showZoomPill();
@@ -255,9 +218,7 @@ async function setZoom(level: number, opts: { live?: boolean } = {}) {
 
 /** Reset to 1x. Used on lens switch and by double-tap. */
 function resetZoom() {
-  zoomSeq++;
   zoomLevel = 1;
-  hwZoom = 1;
   applyZoomView();
   sendState();
 }
@@ -336,10 +297,7 @@ async function openMedia(want: Facing): Promise<MediaStream> {
         /* keep whatever we opened */
       }
     }
-    if (v) {
-      settleWidest(v);
-      hwZoom = 1;
-    }
+    if (v) settleWidest(v);
     return got;
   }
 
@@ -372,8 +330,7 @@ async function startCamera() {
   setMode();
 
   video.addEventListener("resize", updateReadout);
-  // A new track has a new zoom range, and settleWidest may still be racing.
-  // Re-sync the crop so the viewfinder keeps matching grabFrame.
+  // Keep the crop in sync after a camera switch.
   applyZoomView();
 }
 
@@ -415,9 +372,8 @@ async function grabFrame(quality: number, maxW: number): Promise<Uint8Array | nu
   const vw = video.videoWidth;
   const vh = video.videoHeight;
   if (!vw || !vh) return null;
-  // Centre crop by the digital portion of zoomLevel. Hardware zoom is
-  // already baked into the pixels; this covers the rest.
-  const d = digitalZoom();
+  // Centre crop by zoomLevel. Same ratio the viewfinder scales by.
+  const d = zoomLevel;
   const sw = Math.max(16, Math.round(vw / d));
   const sh = Math.max(16, Math.round(vh / d));
   const sx = Math.round((vw - sw) / 2);
@@ -562,12 +518,8 @@ function connect() {
         sendJson({ t: "ack", id: msg.id, ok: true });
         break;
       case "zoom":
-        try {
-          await setZoom(msg.level);
-          sendJson({ t: "ack", id: msg.id, ok: true, detail: `${zoomLevel.toFixed(1)}x` });
-        } catch (e) {
-          sendJson({ t: "ack", id: msg.id, ok: false, err: String(e) });
-        }
+        setZoom(msg.level);
+        sendJson({ t: "ack", id: msg.id, ok: true, detail: `${zoomLevel.toFixed(1)}x` });
         break;
     }
   };
@@ -675,13 +627,6 @@ video.addEventListener(
     pinch.startZoom = zoomLevel;
     // A pinch is not a tap, even if one finger later lands near another.
     lastTapAt = 0;
-    // Take hardware zoom out of the picture for the gesture so the crop
-    // ratio stays honest even when pinching back below the current level.
-    // The commit at the end puts the hardware back to work.
-    const t = track();
-    if (t) settleWidest(t);
-    hwZoom = 1;
-    applyZoomView();
   },
   { passive: true },
 );
@@ -692,7 +637,7 @@ video.addEventListener(
     if (!pinch.active || e.touches.length !== 2) return;
     const d = touchDist(e.touches);
     if (pinch.startDist > 0 && d > 0) {
-      void setZoom(pinch.startZoom * (d / pinch.startDist), { live: true });
+      setZoom(pinch.startZoom * (d / pinch.startDist));
     }
   },
   { passive: true },
@@ -703,8 +648,8 @@ const endPinch = () => {
   pinch.active = false;
   pinchEndedAt = Date.now();
   lastTapAt = 0;
-  // Commit: let the track take as much of the zoom as it can.
-  void setZoom(zoomLevel);
+  // The live moves already set the crop. This is just the final state push.
+  setZoom(zoomLevel);
 };
 video.addEventListener("touchend", endPinch, { passive: true });
 video.addEventListener("touchcancel", endPinch, { passive: true });
@@ -719,7 +664,7 @@ stage.addEventListener("pointerup", (e) => {
   if (now - pinchEndedAt < 500) return;
   if (now - lastTapAt < 320) {
     lastTapAt = 0;
-    void setZoom(1);
+    setZoom(1);
   } else {
     lastTapAt = now;
   }
@@ -728,7 +673,7 @@ stage.addEventListener("pointerup", (e) => {
 stage.addEventListener("dblclick", (e) => {
   if (isUiTarget(e)) return;
   if (Date.now() - pinchEndedAt < 500) return;
-  void setZoom(1);
+  setZoom(1);
 });
 
 sheetClose.addEventListener("click", () => {
