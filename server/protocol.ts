@@ -28,7 +28,7 @@ export const DEFAULT_STREAM: StreamParams = {
 /** phone -> server, text frames */
 export type PhoneMsg =
   | { t: "hello"; v: 1; caps: PhoneCaps }
-  | { t: "state"; facing: Facing; torch: boolean; paused: boolean; width: number; height: number }
+  | { t: "state"; facing: Facing; torch: boolean; paused: boolean; width: number; height: number; cam?: string }
   | { t: "ack"; id: string; ok: true; detail?: string }
   | { t: "ack"; id: string; ok: false; err: string }
   | { t: "bye" };

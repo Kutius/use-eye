@@ -107,28 +107,88 @@ async function requestWakeLock() {
   }
 }
 
-async function openMedia(facing: Facing): Promise<MediaStream> {
-  // Constraints loosen in stages. The 1920x1080 wish can make some Android
-  // camera HALs stall instead of rejecting, and a QR scanner still holding
-  // the rear camera makes getUserMedia sit there forever.
-  const attempts: MediaStreamConstraints[] = [
-    { audio: false, video: { facingMode: { ideal: facing }, width: { ideal: 1920 }, height: { ideal: 1080 } } },
-    { audio: false, video: { facingMode: facing } },
-    { audio: false, video: true },
+function errName(e: unknown): string {
+  if (e instanceof Error) return e.name === "Error" ? e.message : e.name;
+  return String(e);
+}
+
+function stopStream(s: MediaStream | null) {
+  s?.getTracks().forEach((t) => t.stop());
+}
+
+/**
+ * Open the camera without ever leaving a request hanging.
+ *
+ * getUserMedia can sit forever when another app holds the camera. Abandoning
+ * it and immediately retrying makes that worse: the orphaned request still
+ * owns the camera and the next one queues behind it. Each attempt gets a real
+ * budget, a stream that arrives after we gave up is stopped immediately, and
+ * we never accept a stream whose facing does not match, because an
+ * unconstrained request silently hands back the front camera on most phones.
+ */
+async function openMedia(want: Facing): Promise<MediaStream> {
+  // Minimal constraints first. The 1920x1080 wish is what wedges some Android
+  // HALs, so it is applied afterwards as a best-effort upgrade, never as a
+  // condition of opening the camera.
+  const attempts: Array<{ c: MediaStreamConstraints; ms: number; label: string }> = [
+    { label: "facing-ideal", ms: 5000, c: { audio: false, video: { facingMode: { ideal: want } } } },
+    { label: "facing-exact", ms: 5000, c: { audio: false, video: { facingMode: { exact: want } } } },
+    { label: "no-res", ms: 5000, c: { audio: false, video: { facingMode: want } } },
+    {
+      label: "preferred",
+      ms: 8000,
+      c: { audio: false, video: { facingMode: { ideal: want }, width: { ideal: 1920 }, height: { ideal: 1080 } } },
+    },
   ];
+
   let lastErr: unknown = null;
-  for (const constraints of attempts) {
-    try {
-      return await Promise.race([
-        navigator.mediaDevices.getUserMedia(constraints),
-        new Promise<never>((_, rej) =>
-          setTimeout(() => rej(new Error("camera did not respond in 5s")), 5000),
-        ),
-      ]);
-    } catch (e) {
-      lastErr = e;
+
+  for (const { c, ms, label } of attempts) {
+    let abandoned = false;
+    const pending = navigator.mediaDevices.getUserMedia(c);
+    // If we walk away, kill whatever this request eventually hands back.
+    pending.then(
+      (s) => {
+        if (abandoned) stopStream(s);
+      },
+      () => {},
+    );
+
+    const got = await Promise.race([
+      pending,
+      new Promise<null>((res) => setTimeout(() => res(null), ms)),
+    ]);
+
+    if (!got) {
+      abandoned = true;
+      lastErr = new Error(`${label} timed out after ${ms}ms`);
+      continue;
     }
+
+    const settings = got.getVideoTracks()[0]?.getSettings() as { facingMode?: string } | undefined;
+    const gotFacing = settings?.facingMode;
+    if (gotFacing && gotFacing !== want) {
+      abandoned = true;
+      stopStream(got);
+      lastErr = new Error(`${label} opened the ${gotFacing} camera, want ${want}`);
+      continue;
+    }
+
+    // Best-effort resolution upgrade. Failure is fine: the stream is usable.
+    const v = got.getVideoTracks()[0] as MediaStreamTrack | undefined;
+    if (v?.applyConstraints) {
+      try {
+        await Promise.race([
+          v.applyConstraints({ width: { ideal: 1920 }, height: { ideal: 1080 } }),
+          new Promise((r) => setTimeout(r, 800)),
+        ]);
+      } catch {
+        /* keep whatever we opened */
+      }
+    }
+    return got;
   }
+
   throw lastErr ?? new Error("camera unavailable");
 }
 
@@ -231,6 +291,19 @@ function sendJson(msg: unknown) {
   if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
 }
 
+/** Push the current camera state to the bridge. */
+function sendState() {
+  sendJson({
+    t: "state",
+    facing,
+    torch: torchOn,
+    paused,
+    width: video.videoWidth,
+    height: video.videoHeight,
+    cam: cameraErrorMsg || (stream ? "ok" : "starting"),
+  });
+}
+
 function sendFrame(bytes: Uint8Array) {
   if (ws?.readyState === WebSocket.OPEN) {
     ws.send(bytes);
@@ -267,14 +340,7 @@ function connect() {
         facing: ["user", "environment"],
       },
     });
-    sendJson({
-      t: "state",
-      facing,
-      torch: torchOn,
-      paused,
-      width: video.videoWidth,
-      height: video.videoHeight,
-    });
+    sendState();
     btnTorch.disabled = !supportsTorch();
     startPushLoop();
     setMode();
@@ -322,14 +388,7 @@ function connect() {
           facing = msg.mode;
           await startCamera();
           updateReadout();
-          sendJson({
-            t: "state",
-            facing,
-            torch: torchOn,
-            paused,
-            width: video.videoWidth,
-            height: video.videoHeight,
-          });
+          sendState();
           sendJson({ t: "ack", id: msg.id, ok: true });
         } catch (e) {
           sendJson({ t: "ack", id: msg.id, ok: false, err: String(e) });
@@ -338,14 +397,7 @@ function connect() {
       case "pause":
         paused = msg.on;
         setMode();
-        sendJson({
-          t: "state",
-          facing,
-          torch: torchOn,
-          paused,
-          width: video.videoWidth,
-          height: video.videoHeight,
-        });
+        sendState();
         sendJson({ t: "ack", id: msg.id, ok: true });
         break;
     }
@@ -405,17 +457,10 @@ btnFlip.addEventListener("click", async () => {
   try {
     await startCamera();
     btnTorch.disabled = !supportsTorch();
-    sendJson({
-      t: "state",
-      facing,
-      torch: torchOn,
-      paused,
-      width: video.videoWidth,
-      height: video.videoHeight,
-    });
+    sendState();
     updateReadout();
-  } catch {
-    showHint("Could not switch camera.", true);
+  } catch (e) {
+    showHint(`Could not switch camera (${errName(e)}).`, true);
   }
 });
 
@@ -424,14 +469,7 @@ btnPause.addEventListener("click", () => {
   setMode();
   showHint(paused ? "Stream paused. The agent sees nothing new." : "Stream resumed.");
   window.setTimeout(hideHint, 1400);
-  sendJson({
-    t: "state",
-    facing,
-    torch: torchOn,
-    paused,
-    width: video.videoWidth,
-    height: video.videoHeight,
-  });
+  sendState();
 });
 
 sheetClose.addEventListener("click", () => {
@@ -456,26 +494,21 @@ void (async () => {
 
   try {
     await startCamera();
-  } catch {
+  } catch (e) {
     // Rear cameras get claimed by the QR scanner that opened this page.
     // Fall back to whatever camera answers before giving up.
+    const rearErr = errName(e);
     try {
       facing = facing === "environment" ? "user" : "environment";
       await startCamera();
-      showHint("Rear camera was busy. Using the other one.");
-      sendJson({
-        t: "state",
-        facing,
-        torch: torchOn,
-        paused,
-        width: video.videoWidth,
-        height: video.videoHeight,
-      });
-    } catch {
+      showHint(`${facing === "user" ? "Rear" : "Front"} camera failed (${rearErr}). Using the other one.`, true);
+      window.setTimeout(hideHint, 4000);
+      sendState();
+    } catch (e2) {
       stage.classList.add("is-error");
-      cameraErrorMsg = "no camera";
+      cameraErrorMsg = errName(e2);
       updateTally();
-      showHint("No camera responded. Close other camera apps and reload.", true);
+      showHint(`No camera responded (${cameraErrorMsg}). Close other camera apps and reload.`, true);
       return;
     }
   }

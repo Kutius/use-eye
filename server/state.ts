@@ -33,6 +33,7 @@ class EyeState {
   facing: Facing = "environment";
   torch = false;
   paused = false;
+  cameraNote = "";
   params: StreamParams = { ...DEFAULT_STREAM };
   connectedAt: number | null = null;
   lastMsgAt: number | null = null;
@@ -88,6 +89,7 @@ class EyeState {
         this.facing = msg.facing;
         this.torch = msg.torch;
         this.paused = msg.paused;
+        if (msg.cam !== undefined) this.cameraNote = msg.cam;
         break;
       case "ack": {
         const p = this.pending.get(msg.id);
@@ -174,6 +176,7 @@ class EyeState {
       facing: this.facing,
       torch: this.torch,
       paused: this.paused,
+      camera: this.cameraNote,
       params: this.params,
       frame: this.frame
         ? {
